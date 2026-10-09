@@ -9,7 +9,7 @@ wrapper and the containerd runtime handler `paguro`. You don't need Ansible
 or an image build on the nodes.
 
 ```
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.0 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.1 \
   -n paguro-system --create-namespace
 ```
 
@@ -76,14 +76,14 @@ under one registry prefix and tag:
 `<registry>/paguro-node-installer:<tag>`.
 
 ```
-make controller-push installer-push PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.0
-make agent-image PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.0 && docker push registry.example.com/paguro/paguro-agent:v0.1.0
+make controller-push installer-push PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.1
+make agent-image PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.1 && docker push registry.example.com/paguro/paguro-agent:v0.1.1
 # or all in one go:
-make images-push PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.0
+make images-push PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.1
 
 # A registry without TLS (development clusters), via crane; PUSH_REGISTRY
 # is the address this machine reaches it under:
-make images-crane-push PUSH_REGISTRY=registry.example.com:5000 TAG=v0.1.0
+make images-crane-push PUSH_REGISTRY=registry.example.com:5000 TAG=v0.1.1
 ```
 
 `make installer-test` runs the node installer against fake host roots
@@ -96,7 +96,7 @@ uninstall. No cluster is needed.
 ```
 kubectl create namespace paguro-system
 kubectl label namespace paguro-system pod-security.kubernetes.io/enforce=privileged
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.0 -n paguro-system
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.1 -n paguro-system
 kubectl -n paguro-system rollout status ds/paguro-agent
 ```
 
@@ -208,7 +208,7 @@ tested on k3s/RKE2.
 ### AL2023 (managed node groups)
 
 ```
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.0 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.1 \
   -n paguro-system --create-namespace
 # images mirrored to ECR instead of ghcr.io:
 #   --set global.imageRegistry=<account>.dkr.ecr.<region>.amazonaws.com/paguro
@@ -459,7 +459,7 @@ Windows, with a checksum file), or build it from source with
 `make kubectl-plugin`:
 
 ```
-VERSION=v0.1.0 OS=linux ARCH=amd64
+VERSION=v0.1.1 OS=linux ARCH=amd64
 curl -fsSLO https://github.com/DPicillo/paguro/releases/download/$VERSION/kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 tar -xzf kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 install -m 0755 kubectl-paguro_${VERSION}_${OS}_${ARCH}/kubectl-paguro ~/.local/bin/

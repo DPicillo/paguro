@@ -153,8 +153,7 @@ entry) and Artifact Hub's index cannot be taken back. In this order:
      version (one that fails to load stays missing for that version);
      the browser loads the others from `main`:
      `https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/paguro.png`,
-     `…/how-it-works.png`, `…/paguro-place-move.gif`,
-     `…/paguro-place-{before,freeze,after}.png`.
+     `…/how-it-works.png`.
 8. **Artifact Hub:** enable the repository (Control Panel → Repositories →
    paguro → Edit → uncheck "Disabled"). The tracker indexes it within
    about 30 minutes; the `artifacthub.io` tag that the `v0.1.0` release

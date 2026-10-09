@@ -136,7 +136,7 @@ that does not qualify is left alone. Full list:
 ### Install
 
 ```sh
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.0 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.1 \
   --namespace paguro-system --create-namespace
 kubectl -n paguro-system rollout status ds/paguro-agent
 ```
@@ -156,7 +156,7 @@ From the [GitHub release](https://github.com/DPicillo/paguro/releases)
 (archives for Linux, macOS and Windows, and a checksum file):
 
 ```sh
-VERSION=v0.1.0 OS=linux ARCH=amd64   # darwin, windows; arm64
+VERSION=v0.1.1 OS=linux ARCH=amd64   # darwin, windows; arm64
 curl -fsSLO https://github.com/DPicillo/paguro/releases/download/$VERSION/kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 tar -xzf kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 install -m 0755 kubectl-paguro_${VERSION}_${OS}_${ARCH}/kubectl-paguro ~/.local/bin/

@@ -4,6 +4,13 @@ All notable changes to Paguro. Versions follow [Semantic
 Versioning](https://semver.org); before 1.0 a minor version may change the
 API (`paguro.dev/v1alpha1`) and the chart's values.
 
+## v0.1.1 – 2026-10-09
+
+Documentation only: the chart's README and its Artifact Hub page no longer
+show the recording of a migration with a 25 GiB block volume, whose freeze
+of about 12 s (the volume's detach and attach) is not typical. Install
+commands point to 0.1.1. No code changes.
+
 ## v0.1.0 – 2026-10-09
 
 First public release. Paguro live-migrates running Kubernetes pods between

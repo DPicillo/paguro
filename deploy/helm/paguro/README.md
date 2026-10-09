@@ -4,14 +4,6 @@
 another node – its memory, open files, volumes and network connections – and
 resumes it there. Clients see a stall of well under a second, not a restart.
 
-![paguro-place, a WebSocket server with a 1 GiB canvas in memory, moves to another node while the browser keeps its connection](https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/paguro-place-move.gif)
-
-*A WebSocket server with a 1 GiB canvas in memory and a 25 GiB RWO volume
-moves to the other hypervisor; the browser keeps the same TCP connection,
-0 reconnects. The freeze is long here because the block volume is detached
-and attached inside it – pods without RWO volumes freeze for well under a
-second.*
-
 Made for workloads that cannot simply be restarted or failed over: game
 servers with players connected, long-running jobs, sessions held in memory,
 single-replica services. Because Paguro answers the Eviction API,
@@ -90,7 +82,7 @@ is left alone. Full list:
 ## Install
 
 ```sh
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.0 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.1 \
   -n paguro-system --create-namespace
 kubectl -n paguro-system rollout status ds/paguro-agent
 ```
@@ -115,7 +107,7 @@ From the [GitHub release](https://github.com/DPicillo/paguro/releases)
 (archives for Linux, macOS and Windows, with a checksum file):
 
 ```sh
-VERSION=v0.1.0 OS=linux ARCH=amd64   # OS: linux, darwin, windows; ARCH: amd64, arm64
+VERSION=v0.1.1 OS=linux ARCH=amd64   # OS: linux, darwin, windows; ARCH: amd64, arm64
 curl -fsSLO https://github.com/DPicillo/paguro/releases/download/$VERSION/kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 tar -xzf kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 install -m 0755 kubectl-paguro_${VERSION}_${OS}_${ARCH}/kubectl-paguro ~/.local/bin/
@@ -337,7 +329,7 @@ the install instead of being ignored. Set values with `-f my-values.yaml` or
 | [`calico.yaml`](https://github.com/DPicillo/paguro/blob/main/deploy/helm/paguro/examples/calico.yaml) | Calico with calico-ipam: pods keep their IP |
 
 ```sh
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.0 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.1 \
   -n paguro-system --create-namespace \
   -f https://raw.githubusercontent.com/DPicillo/paguro/main/deploy/helm/paguro/examples/eks-karpenter.yaml
 ```
