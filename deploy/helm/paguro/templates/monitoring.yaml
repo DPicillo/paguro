@@ -1,0 +1,52 @@
+{{- /* Monitoring (docs/OPERATIONS.md): alert rules and scrape configuration
+for the Prometheus Operator, a Grafana dashboard for the Grafana sidecar.
+Without the operator the pods carry prometheus.io/scrape annotations. */ -}}
+{{- $mon := .Values.monitoring | default dict }}
+{{- $operator := .Capabilities.APIVersions.Has "monitoring.coreos.com/v1/PrometheusRule" }}
+{{- $rule := dig "prometheusRule" "enabled" "auto" $mon }}
+{{- if or (eq (toString $rule) "true") (and (eq (toString $rule) "auto") $operator) }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: paguro
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+    {{- with dig "prometheusRule" "labels" dict $mon }}{{ toYaml . | nindent 4 }}{{ end }}
+spec:
+  {{- .Files.Get "files/alerts.yaml" | nindent 2 }}
+{{- end }}
+{{- $pm := dig "podMonitor" "enabled" "auto" $mon }}
+{{- if or (eq (toString $pm) "true") (and (eq (toString $pm) "auto") (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/PodMonitor")) }}
+{{- range $c := list (dict "name" "controller" "port" "metrics") (dict "name" "agent" "port" "metrics") }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: paguro-{{ $c.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "paguro.labels" $ | nindent 4 }}
+    {{- with dig "podMonitor" "labels" dict $mon }}{{ toYaml . | nindent 4 }}{{ end }}
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/name: paguro-{{ $c.name }}}
+  podMetricsEndpoints:
+    - port: {{ $c.port }}
+      interval: 30s
+{{- end }}
+{{- end }}
+{{- if dig "grafanaDashboard" "enabled" false $mon }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paguro-dashboard
+  namespace: {{ dig "grafanaDashboard" "namespace" "" $mon | default .Release.Namespace }}
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+    {{- toYaml (dig "grafanaDashboard" "labels" (dict "grafana_dashboard" "1") $mon) | nindent 4 }}
+data:
+  paguro.json: |-
+    {{- .Files.Get "files/dashboard.json" | nindent 4 }}
+{{- end }}

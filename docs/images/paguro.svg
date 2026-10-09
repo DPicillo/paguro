@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Paguro">
+  <title>Paguro</title>
+  <!-- A hermit crab (paguro) carrying its shell: the pod that moves house. -->
+  <rect width="128" height="128" rx="24" fill="#0f3b57"/>
+  <!-- shell -->
+  <path d="M30 78c0-24 18-42 40-42s36 15 36 33c0 16-12 27-27 27-12 0-21-8-21-19 0-9 7-16 16-16 7 0 12 5 12 11"
+        fill="none" stroke="#f2a541" stroke-width="9" stroke-linecap="round"/>
+  <path d="M30 78c0 9 4 16 10 20h46" fill="none" stroke="#f2a541" stroke-width="9" stroke-linecap="round"/>
+  <!-- body and claws -->
+  <ellipse cx="34" cy="96" rx="14" ry="9" fill="#e4572e"/>
+  <path d="M22 92c-8-2-12-8-10-14 6 0 10 3 12 8" fill="#e4572e"/>
+  <path d="M26 101c-7 3-9 9-7 13 6-1 9-5 10-9" fill="#e4572e"/>
+  <!-- eyes -->
+  <line x1="30" y1="88" x2="27" y2="74" stroke="#e4572e" stroke-width="3" stroke-linecap="round"/>
+  <line x1="38" y1="88" x2="40" y2="74" stroke="#e4572e" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="27" cy="72" r="4" fill="#ffffff"/>
+  <circle cx="40" cy="72" r="4" fill="#ffffff"/>
+  <circle cx="27" cy="72" r="2" fill="#0f3b57"/>
+  <circle cx="40" cy="72" r="2" fill="#0f3b57"/>
+</svg>

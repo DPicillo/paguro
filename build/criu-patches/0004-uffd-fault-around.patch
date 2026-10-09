@@ -1,0 +1,84 @@
+From 1b892843670393a6a2d802e07a70f1a20aa8ffd1 Mon Sep 17 00:00:00 2001
+From: Paguro <paguro@example.invalid>
+Date: Wed, 7 Oct 2026 04:19:36 +0200
+Subject: [PATCH] uffd: fault around
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A page fault brought in one page. A restored task that touches all its
+memory soon after the restore – a JVM whose garbage collector walks a
+1.5 GiB heap – then takes one round trip through the daemon per page,
+and the background transfer, reset to 64 KiB by every fault, does not
+catch up: the task ran at about 130 MB/s of its memory and stood still
+for 12 s, longer than an eager restore would have taken inside the
+freeze.
+
+Bring in the aligned 64 KiB block around the faulting address, clipped
+to its IOV. The pages are read from the same image in one go, so the
+fault costs little more, and the next fifteen faults of a task that
+walks its memory do not happen. Measured with the JVM above on a 4-vCPU
+node whose page cache could not hold the images: the server was back
+with its players 4-6 s sooner; the rest of the 9-12 s the daemon needs
+is reading the images from disk.
+
+Signed-off-by: Paguro <paguro@example.invalid>
+---
+ criu/uffd.c | 20 +++++++++++++++++---
+ 1 file changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/criu/uffd.c b/criu/uffd.c
+index 6e400f6..76b6375 100644
+--- a/criu/uffd.c
++++ b/criu/uffd.c
+@@ -68,6 +68,15 @@
+ #define DEFAULT_XFER_LEN (64 << 10)
+ #define MAX_XFER_LEN	 (4 << 20)
+ 
++/*
++ * A page fault brings in the aligned block around the faulting address,
++ * clipped to its IOV. A restored task usually touches its memory in runs
++ * (a garbage collector walking its heap, buffers read front to back), and
++ * reading 64 Kbytes costs little more than reading one page, while every
++ * fault costs a round trip through the daemon.
++ */
++#define FAULT_AROUND_LEN (64 << 10)
++
+ static mutex_t *lazy_sock_mutex;
+ 
+ struct lazy_iov {
+@@ -1253,7 +1262,8 @@ static bool is_page_queued(struct lazy_pages_info *lpi, unsigned long addr)
+ static int handle_page_fault(struct lazy_pages_info *lpi, struct uffd_msg *msg)
+ {
+ 	struct lazy_iov *iov;
+-	__u64 address;
++	unsigned long start, end;
++	__u64 address, block;
+ 	int ret;
+ 
+ 	/* Align requested address to the next page boundary */
+@@ -1267,7 +1277,11 @@ static int handle_page_fault(struct lazy_pages_info *lpi, struct uffd_msg *msg)
+ 	if (!iov)
+ 		return uffd_zero(lpi, address, 1);
+ 
+-	iov = extract_range(lpi, iov, address, address + PAGE_SIZE);
++	block = address & ~((__u64)FAULT_AROUND_LEN - 1);
++	start = max(iov->start, (unsigned long)block);
++	end = min(iov->end, (unsigned long)block + FAULT_AROUND_LEN);
++
++	iov = extract_range(lpi, iov, start, end);
+ 	if (!iov)
+ 		return -1;
+ 
+@@ -1276,7 +1290,7 @@ static int handle_page_fault(struct lazy_pages_info *lpi, struct uffd_msg *msg)
+ 
+ 	update_xfer_len(lpi, true);
+ 
+-	ret = uffd_handle_pages(lpi, iov->img_start, 1, PR_ASYNC | PR_ASAP);
++	ret = uffd_handle_pages(lpi, iov->img_start, (end - start) / PAGE_SIZE, PR_ASYNC | PR_ASAP);
+ 	if (ret < 0) {
+ 		lp_err(lpi, "Error during regular page copy\n");
+ 		return -1;
+-- 
+2.47.3
+

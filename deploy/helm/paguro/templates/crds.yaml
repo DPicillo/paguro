@@ -1,0 +1,14 @@
+{{- /*
+The Migration CRD is rendered as a template so that `helm upgrade` updates
+it (Helm never upgrades files in crds/). resource-policy keep: `helm
+uninstall` leaves the CRD – and with it every Migration object – in place.
+*/}}
+{{- /* dig: also works after `helm upgrade --reuse-values` from a release without this key */}}
+{{- if dig "install" true (.Values.crds | default dict) }}
+{{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
+{{- $crd := $.Files.Get $path | fromYaml }}
+{{- $_ := set $crd.metadata "annotations" (merge (dict "helm.sh/resource-policy" "keep") (default (dict) $crd.metadata.annotations)) }}
+---
+{{ toYaml $crd }}
+{{- end }}
+{{- end }}

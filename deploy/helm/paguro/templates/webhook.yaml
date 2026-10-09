@@ -1,0 +1,84 @@
+{{- /* Mutating webhook for pod CREATE.
+The controller writes the caBundle itself on start (self-signed CA in the
+secret paguro-webhook-tls, no cert-manager). The current caBundle is carried
+over via lookup so that `helm upgrade` never blanks it, even for a moment. */ -}}
+{{- $existing := lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration" "" "paguro" }}
+{{- $caBundle := "" }}
+{{- if $existing }}
+{{- range $existing.webhooks }}
+{{- with (dig "clientConfig" "caBundle" "" .) }}{{ $caBundle = . }}{{ end }}
+{{- end }}
+{{- end }}
+{{- $exclude := uniq (append .Values.webhook.excludeNamespaces .Release.Namespace) }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: paguro
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+webhooks:
+  - name: pods.paguro.dev
+    admissionReviewVersions: ["v1"]
+    clientConfig:
+      service:
+        name: paguro-controller
+        namespace: {{ .Release.Namespace }}
+        path: /mutate-v1-pod
+        port: 9443
+      {{- with $caBundle }}
+      caBundle: {{ . }}
+      {{- end }}
+    rules:
+      - operations: ["CREATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        scope: Namespaced
+    # Ignore: a failing controller must never block pod creation.
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    reinvocationPolicy: Never
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            {{- toYaml $exclude | nindent 12 }}
+        {{- with .Values.webhook.extraNamespaceSelector }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+{{- if .Values.webhook.evictions }}
+  # Evictions of migratable pods become migrations (internal/webhook/eviction.go).
+  - name: evictions.paguro.dev
+    admissionReviewVersions: ["v1"]
+    clientConfig:
+      service:
+        name: paguro-controller
+        namespace: {{ .Release.Namespace }}
+        path: /evict-v1-pod
+        port: 9443
+      {{- with $caBundle }}
+      caBundle: {{ . }}
+      {{- end }}
+    rules:
+      - operations: ["CREATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods/eviction"]
+        scope: Namespaced
+    # Ignore: a Paguro outage never blocks a drain.
+    failurePolicy: Ignore
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    reinvocationPolicy: Never
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            {{- toYaml $exclude | nindent 12 }}
+        {{- with .Values.webhook.extraNamespaceSelector }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+{{- end }}

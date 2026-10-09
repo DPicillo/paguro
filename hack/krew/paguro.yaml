@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Krew plugin manifest template for kubectl-paguro (krew-index:
+# plugins/paguro.yaml). hack/krew/render.sh fills in @VERSION@ and the
+# @SHA256_<OS>_<ARCH>@ sums from the release's checksum file; the archives
+# are the ones `make plugin-dist` builds for every release
+# (kubectl-paguro_<tag>_<os>_<arch>.tar.gz, one directory of the same name
+# with the binary and LICENSE). docs/RELEASING.md, "krew".
+apiVersion: krew.googlecontainertools.github.com/v1alpha2
+kind: Plugin
+metadata:
+  name: paguro
+spec:
+  version: "@VERSION@"
+  homepage: https://github.com/DPicillo/paguro
+  shortDescription: Live-migrate running pods to other nodes
+  description: |
+    Paguro moves a running pod to another node with CRIU – its memory, open
+    files, emptyDirs and volumes – while its TCP connections and UDP flows
+    continue. This plugin starts and follows migrations and drains:
+
+      kubectl paguro migrate <pod> [--to <node>] [--wait]
+      kubectl paguro drain <node>
+      kubectl paguro list | describe <migration> | nodes | version
+  caveats: |
+    The plugin needs Paguro installed in the cluster:
+
+      helm install paguro oci://ghcr.io/dpicillo/charts/paguro \
+        -n paguro-system --create-namespace
+
+    Requirements and limitations: https://github.com/DPicillo/paguro
+  platforms:
+    - selector:
+        matchLabels:
+          os: linux
+          arch: amd64
+      uri: https://github.com/DPicillo/paguro/releases/download/@VERSION@/kubectl-paguro_@VERSION@_linux_amd64.tar.gz
+      sha256: "@SHA256_LINUX_AMD64@"
+      files:
+        - from: kubectl-paguro_@VERSION@_linux_amd64/kubectl-paguro
+          to: .
+        - from: kubectl-paguro_@VERSION@_linux_amd64/LICENSE
+          to: .
+      bin: kubectl-paguro
+    - selector:
+        matchLabels:
+          os: linux
+          arch: arm64
+      uri: https://github.com/DPicillo/paguro/releases/download/@VERSION@/kubectl-paguro_@VERSION@_linux_arm64.tar.gz
+      sha256: "@SHA256_LINUX_ARM64@"
+      files:
+        - from: kubectl-paguro_@VERSION@_linux_arm64/kubectl-paguro
+          to: .
+        - from: kubectl-paguro_@VERSION@_linux_arm64/LICENSE
+          to: .
+      bin: kubectl-paguro
+    - selector:
+        matchLabels:
+          os: darwin
+          arch: amd64
+      uri: https://github.com/DPicillo/paguro/releases/download/@VERSION@/kubectl-paguro_@VERSION@_darwin_amd64.tar.gz
+      sha256: "@SHA256_DARWIN_AMD64@"
+      files:
+        - from: kubectl-paguro_@VERSION@_darwin_amd64/kubectl-paguro
+          to: .
+        - from: kubectl-paguro_@VERSION@_darwin_amd64/LICENSE
+          to: .
+      bin: kubectl-paguro
+    - selector:
+        matchLabels:
+          os: darwin
+          arch: arm64
+      uri: https://github.com/DPicillo/paguro/releases/download/@VERSION@/kubectl-paguro_@VERSION@_darwin_arm64.tar.gz
+      sha256: "@SHA256_DARWIN_ARM64@"
+      files:
+        - from: kubectl-paguro_@VERSION@_darwin_arm64/kubectl-paguro
+          to: .
+        - from: kubectl-paguro_@VERSION@_darwin_arm64/LICENSE
+          to: .
+      bin: kubectl-paguro
+    - selector:
+        matchLabels:
+          os: windows
+          arch: amd64
+      uri: https://github.com/DPicillo/paguro/releases/download/@VERSION@/kubectl-paguro_@VERSION@_windows_amd64.tar.gz
+      sha256: "@SHA256_WINDOWS_AMD64@"
+      files:
+        - from: kubectl-paguro_@VERSION@_windows_amd64/kubectl-paguro.exe
+          to: .
+        - from: kubectl-paguro_@VERSION@_windows_amd64/LICENSE
+          to: .
+      bin: kubectl-paguro.exe

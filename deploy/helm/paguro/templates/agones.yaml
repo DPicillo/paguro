@@ -1,0 +1,43 @@
+{{- /* Agones game servers (internal/controller/agones.go). A GameServer owns
+its pod by name; Agones declares it Unhealthy – and a Fleet replaces it with a
+fresh process – when that pod is deleted, missing or on another node. While
+Paguro replaces the pod under the same name it marks the GameServer
+paguro.dev/migrating; this policy turns away the change to Unhealthy in that
+window (Agones retries), then Paguro points the GameServer at the target node
+and lifts the mark. */ -}}
+{{- if include "paguro.agones" . }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: paguro-agones-guard
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["agones.dev"]
+        apiVersions: ["*"]
+        operations: ["UPDATE"]
+        resources: ["gameservers"]
+  matchConditions:
+    - name: held-by-paguro
+      expression: "has(oldObject.metadata.annotations) && 'paguro.dev/migrating' in oldObject.metadata.annotations"
+  validations:
+    - expression: >-
+        object.?status.?state.orValue('') != 'Unhealthy' ||
+        oldObject.?status.?state.orValue('') == 'Unhealthy'
+      messageExpression: >-
+        'Paguro is moving GameServer ' + object.metadata.name + ' to another node (migration ' +
+        oldObject.metadata.annotations['paguro.dev/migrating'] + '); its pod is replaced with the game state kept – retry'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: paguro-agones-guard
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+spec:
+  policyName: paguro-agones-guard
+  validationActions: [Deny]
+{{- end }}

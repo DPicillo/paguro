@@ -1,0 +1,6 @@
+bin/
+dist/
+.git/
+.cache/
+**/*_test.go
+*.tar

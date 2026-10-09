@@ -1,0 +1,52 @@
+name: Bug report
+description: A migration failed, rolled back, froze too long, or connections were lost.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Security problems never go here – please use
+        [private vulnerability reporting](https://github.com/DPicillo/paguro/security/advisories/new)
+        (SECURITY.md). Remove anything secret from logs and status before you paste them.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: The workload, how it was moved (Migration, kubectl paguro, drain, Karpenter …) and what the clients saw.
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: The Migration
+      description: "`kubectl get migration <name> -n <namespace> -o yaml` (status.message names the reason of a rejection, rollback or failure)."
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        The controller's log and the agents' logs on the source and the target node around the migration:
+        `kubectl -n paguro-system logs deploy/paguro-controller` and `kubectl -n paguro-system logs <paguro-agent-pod>`.
+        A failed restore also leaves `/var/log/paguro/paguro-runc.log` and
+        `/var/lib/paguro/restore/<migration-uid>/containers/<name>/restore-failed.log` on the target node.
+      render: text
+  - type: input
+    id: paguro
+    attributes:
+      label: Paguro version
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Kubernetes version and distribution or cloud (kubeadm, EKS …), containerd and runc versions, kernel, node OS, CNI and its IPAM, network mode (Auto, Preserve, Phantom, Generic), volume types.
+      placeholder: |
+        Kubernetes 1.37.1 (kubeadm), containerd 2.4.1, runc 1.5.2, kernel 6.8 (Ubuntu 24.04)
+        Cilium 1.20.2 (multi-pool IPAM), network: Auto, RWO volume (Cinder)
+    validations:
+      required: true

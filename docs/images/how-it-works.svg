@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <!-- Source of how-it-works.png (font: Roboto), rendered with librsvg:
+       ffmpeg -width 1600 -height 900 -i how-it-works.svg how-it-works.png -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b2738"/>
+      <stop offset="1" stop-color="#0f3b57"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#f2a541"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+
+  <g font-family="Roboto, DejaVu Sans, sans-serif">
+    <!-- title -->
+    <text x="80" y="104" font-size="50" font-weight="500" fill="#ffffff">How a live migration works</text>
+    <text x="80" y="150" font-size="25" fill="#b9cfdd">The pod keeps serving while its memory is copied; it stands still only for the final freeze.</text>
+
+    <!-- source node -->
+    <rect x="80" y="210" width="560" height="270" rx="22" fill="#0a2131" stroke="#2e5a76" stroke-width="2"/>
+    <text x="112" y="258" font-size="26" font-weight="500" fill="#ffffff">Source node</text>
+    <rect x="452" y="232" width="160" height="38" rx="19" fill="#163f5a"/>
+    <text x="532" y="258" font-size="19" fill="#b9cfdd" text-anchor="middle">paguro-agent</text>
+    <rect x="112" y="296" width="496" height="150" rx="16" fill="#12354c" stroke="#f2a541" stroke-width="2.5" stroke-dasharray="10 7"/>
+    <text x="140" y="340" font-size="23" font-weight="500" fill="#f2a541">running pod</text>
+    <text x="140" y="378" font-size="20" fill="#d6e4ee">memory · open files · emptyDirs</text>
+    <text x="140" y="410" font-size="20" fill="#d6e4ee">TCP connections and UDP flows</text>
+
+    <!-- target node -->
+    <rect x="960" y="210" width="560" height="270" rx="22" fill="#0a2131" stroke="#2e5a76" stroke-width="2"/>
+    <text x="992" y="258" font-size="26" font-weight="500" fill="#ffffff">Target node</text>
+    <rect x="1332" y="232" width="160" height="38" rx="19" fill="#163f5a"/>
+    <text x="1412" y="258" font-size="19" fill="#b9cfdd" text-anchor="middle">paguro-agent</text>
+    <rect x="992" y="296" width="496" height="150" rx="16" fill="#12354c" stroke="#3ddc97" stroke-width="2.5"/>
+    <text x="1020" y="340" font-size="23" font-weight="500" fill="#3ddc97">replacement pod</text>
+    <text x="1020" y="378" font-size="20" fill="#d6e4ee">restored by CRIU, same process</text>
+    <text x="1020" y="410" font-size="20" fill="#d6e4ee">same state, connections continue</text>
+
+    <!-- transfer arrow -->
+    <line x1="652" y1="345" x2="946" y2="345" stroke="#f2a541" stroke-width="5" marker-end="url(#arrow)"/>
+    <text x="800" y="320" font-size="19" fill="#f2a541" text-anchor="middle">pages, files, TCP state</text>
+    <text x="800" y="384" font-size="18" fill="#b9cfdd" text-anchor="middle">agent to agent, mutual TLS</text>
+
+    <!-- timeline -->
+    <text x="80" y="560" font-size="21" fill="#7f9fb4" letter-spacing="2">TIMELINE</text>
+    <rect x="80" y="585" width="560" height="54" rx="12" fill="#f2a541"/>
+    <text x="108" y="621" font-size="23" font-weight="500" fill="#0f3b57">1  Pre-copy – the pod runs</text>
+    <rect x="652" y="585" width="616" height="54" rx="12" fill="#e4572e"/>
+    <text x="676" y="621" font-size="23" font-weight="500" fill="#ffffff">2  Freeze: final dump</text>
+    <line x1="1010" y1="572" x2="1010" y2="652" stroke="#ffffff" stroke-width="4"/>
+    <text x="1010" y="563" font-size="18" fill="#ffffff" text-anchor="middle">commit</text>
+    <text x="1139" y="621" font-size="23" font-weight="500" fill="#ffffff" text-anchor="middle">restore</text>
+    <rect x="1280" y="585" width="240" height="54" rx="12" fill="#163f5a" stroke="#3ddc97" stroke-width="2"/>
+    <text x="1400" y="621" font-size="22" font-weight="500" fill="#3ddc97" text-anchor="middle">3  Running</text>
+
+    <!-- explanations -->
+    <text font-size="20" fill="#d6e4ee">
+      <tspan x="80" y="690">CRIU copies the memory in rounds while the</tspan>
+      <tspan x="80" y="718">pod keeps serving; each round sends only</tspan>
+      <tspan x="80" y="746">the pages written since the last one.</tspan>
+    </text>
+    <text font-size="20" fill="#d6e4ee">
+      <tspan x="652" y="690">The pod stands still: CRIU dumps what changed, with the</tspan>
+      <tspan x="652" y="718">TCP state, and the target restores it – well under a</tspan>
+      <tspan x="652" y="746">second for small pods. Before the commit, any failure</tspan>
+      <tspan x="652" y="774">rolls back and the source pod simply runs on.</tspan>
+    </text>
+    <text font-size="20" fill="#d6e4ee">
+      <tspan x="1280" y="690">on the target node,</tspan>
+      <tspan x="1280" y="718">owned by its Deployment,</tspan>
+      <tspan x="1280" y="746">StatefulSet or Agones.</tspan>
+    </text>
+
+    <!-- footer -->
+    <line x1="80" y1="800" x2="1520" y2="800" stroke="#2e5a76" stroke-width="2"/>
+    <text x="80" y="838" font-size="21" fill="#b9cfdd">Started by <tspan fill="#ffffff">kubectl paguro migrate</tspan>, <tspan fill="#ffffff">kubectl drain</tspan>, Karpenter or the Cluster Autoscaler</text>
+    <text x="80" y="870" font-size="21" fill="#b9cfdd">Pod IP kept on Cilium and Calico; elsewhere a new IP, with in-cluster connections kept by <tspan fill="#f2a541">Phantom mode</tspan> (eBPF)</text>
+  </g>
+</svg>

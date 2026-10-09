@@ -1,0 +1,50 @@
+From dbe6e7b60c83a4ff6a24a8b364d47888377af92b Mon Sep 17 00:00:00 2001
+From: Paguro <paguro@example.invalid>
+Date: Fri, 2 Oct 2026 00:05:40 +0200
+Subject: [PATCH] pagemap: complete synchronous reads served from a parent
+ image
+
+The lazy-pages daemon resolves page faults with
+read_pages(..., PR_ASYNC | PR_ASAP), which reads synchronously and relies
+on pr->io_complete (uffd_io_complete -> UFFDIO_COPY) to hand the page
+over. read_pagemap_page() only reaches io_complete through
+maybe_read_page_local() of the current image. For in-parent entries it
+calls read_parent_page(), whose page-read has no io_complete, so the data
+is read into the buffer but never copied into the restored task. If such
+pages are marked lazy (PE_LAZY on a PE_PARENT entry, e.g. local post-copy
+after iterative pre-dumps), the faulting task hangs forever.
+
+Call io_complete after a successful synchronous parent read.
+
+Signed-off-by: Paguro <paguro@example.invalid>
+---
+ criu/pagemap.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/criu/pagemap.c b/criu/pagemap.c
+index 6c9c4f7..7575ac9 100644
+--- a/criu/pagemap.c
++++ b/criu/pagemap.c
+@@ -482,6 +482,19 @@ static int read_pagemap_page(struct page_read *pr, unsigned long vaddr, unsigned
+ 	if (pagemap_in_parent(pr->pe)) {
+ 		if (read_parent_page(pr, vaddr, nr, buf, flags) < 0)
+ 			return -1;
++		/*
++		 * The parent page-read has no io_complete callback, so pages
++		 * that come from a parent image were read into buf but never
++		 * handed over to the caller. For the lazy-pages daemon this
++		 * means a page fault in a lazy, in-parent range is never
++		 * resolved (no UFFDIO_COPY) and the task hangs forever.
++		 * Complete synchronous reads here, as maybe_read_page_local()
++		 * does for pages of the current image.
++		 */
++		if (pr->io_complete && (flags & (PR_ASYNC | PR_ASAP)) != PR_ASYNC) {
++			if (pr->io_complete(pr, vaddr, nr))
++				return -1;
++		}
+ 	} else {
+ 		if (pr->maybe_read_page(pr, vaddr, nr, buf, flags) < 0)
+ 			return -1;
+-- 
+2.47.3
+

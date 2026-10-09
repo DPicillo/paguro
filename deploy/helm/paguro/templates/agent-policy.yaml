@@ -1,0 +1,134 @@
+{{- /* Admission policies for the agents' service account. Every node holds the
+agent's token; RBAC alone would let it change any pod or node in the cluster
+(e.g. a container image), so one compromised node could take over the rest.
+The policies hold each agent to what it does (internal/agent):
+
+  pods               annotations paguro.dev/* and the removal of scheduling
+                     gates, only on Paguro's replacement pods that are
+                     unbound or on the agent's node
+  nodes              paguro.dev/* annotations of its own node, and the
+                     removal of its startup taint paguro.dev/agent-not-ready
+  ciliumnodes        paguro.dev/* annotations (the nudge, also of the source)
+  volumeattachments  create/delete only for its own node (pre-attach)
+  certificatesigningrequests  only for the signer paguro.dev/agent (the
+                     controller signs only the requester's own node)
+  migrations/status  full status only on migrations of its node; others
+                     only their Phantom-mode report (status.phantomUnroutable)
+
+The node comes from the token: a pod-bound service account token carries
+authentication.kubernetes.io/node-name (Kubernetes >= 1.30). Not covered:
+pods/binding (the object names no more than pod and node; see
+SECURITY.md). One policy per resource keeps type checking exact. */ -}}
+{{- if and (dig "restrictionPolicy" "enabled" true .Values.agent) (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy") }}
+{{- $agent := printf "system:serviceaccount:%s:paguro-agent" .Release.Namespace }}
+{{- $policies := list
+  (dict "name" "pods" "group" "" "version" "v1" "resource" "pods" "ops" (list "UPDATE")
+    "rule" `'paguro.dev/restore-id' in variables.oldAnnotations &&
+variables.newAnnotations[?'paguro.dev/restore-id'] == variables.oldAnnotations[?'paguro.dev/restore-id'] &&
+oldObject.spec.?nodeName.orValue('') in ['', variables.node] &&
+variables.onlyPaguroAnnotations && variables.metadataKept &&
+object.spec.containers == oldObject.spec.containers &&
+object.spec.?initContainers == oldObject.spec.?initContainers &&
+object.spec.?activeDeadlineSeconds == oldObject.spec.?activeDeadlineSeconds &&
+object.spec.?terminationGracePeriodSeconds == oldObject.spec.?terminationGracePeriodSeconds &&
+object.spec.?tolerations == oldObject.spec.?tolerations &&
+object.spec.?nodeSelector == oldObject.spec.?nodeSelector &&
+object.spec.?affinity == oldObject.spec.?affinity &&
+(object.spec.?schedulingGates == oldObject.spec.?schedulingGates ||
+ size(object.spec.?schedulingGates.orValue([])) == 0)`
+    "message" `'paguro-agent on ' + variables.node + ': may only annotate (paguro.dev/*) or release Paguro replacement pods that are unbound or on its node, not pod ' + request.namespace + '/' + request.name`)
+  (dict "name" "nodes" "group" "" "version" "v1" "resource" "nodes" "ops" (list "UPDATE")
+    "rule" `object.metadata.name == variables.node &&
+variables.onlyPaguroAnnotations && variables.metadataKept &&
+(object.spec == oldObject.spec || (
+  oldObject.spec.?taints.orValue([]).exists(t, t.key == 'paguro.dev/agent-not-ready') &&
+  object.spec.?taints.orValue([]) == oldObject.spec.?taints.orValue([]).filter(t, t.key != 'paguro.dev/agent-not-ready') &&
+  object.spec.?podCIDR == oldObject.spec.?podCIDR &&
+  object.spec.?podCIDRs == oldObject.spec.?podCIDRs &&
+  object.spec.?providerID == oldObject.spec.?providerID &&
+  object.spec.?unschedulable == oldObject.spec.?unschedulable &&
+  object.spec.?configSource == oldObject.spec.?configSource &&
+  object.spec.?externalID == oldObject.spec.?externalID))`
+    "message" `'paguro-agent on ' + variables.node + ': may only change paguro.dev/* annotations of its own node and remove its startup taint, not change ' + request.name`)
+  (dict "name" "ciliumnodes" "group" "cilium.io" "version" "*" "resource" "ciliumnodes" "ops" (list "UPDATE")
+    "rule" `variables.onlyPaguroAnnotations && variables.metadataKept && object.?spec == oldObject.?spec`
+    "message" `'paguro-agent on ' + variables.node + ': may only change paguro.dev/* annotations of a CiliumNode'`)
+  (dict "name" "volumeattachments" "group" "storage.k8s.io" "version" "v1" "resource" "volumeattachments" "ops" (list "CREATE" "DELETE")
+    "rule" `request.operation == 'CREATE' ? object.spec.nodeName == variables.node : oldObject.spec.nodeName == variables.node`
+    "message" `'paguro-agent on ' + variables.node + ': may only attach volumes to its own node'`)
+  (dict "name" "csr" "group" "certificates.k8s.io" "version" "v1" "resource" "certificatesigningrequests" "ops" (list "CREATE")
+    "rule" `object.spec.signerName == 'paguro.dev/agent'`
+    "message" `'paguro-agent on ' + variables.node + ': may only request certificates from the signer paguro.dev/agent'`)
+  (dict "name" "migrations" "group" "paguro.dev" "version" "*" "resource" "migrations/status" "ops" (list "UPDATE")
+    "rule" `oldObject.?status.?sourceNode.orValue('') == variables.node ||
+oldObject.?status.?targetNode.orValue('') == variables.node || (
+  object.?status.?phase == oldObject.?status.?phase &&
+  object.?status.?source == oldObject.?status.?source &&
+  object.?status.?target == oldObject.?status.?target &&
+  object.?status.?containers == oldObject.?status.?containers &&
+  object.?status.?network == oldObject.?status.?network &&
+  object.?status.?timings == oldObject.?status.?timings)`
+    "message" `'paguro-agent on ' + variables.node + ': migration ' + request.name + ' is not on its node; only its Phantom-mode report may change'`)
+}}
+{{- range $policies }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: paguro-agent-{{ .name }}
+  labels:
+    {{- include "paguro.labels" $ | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [{{ .group | quote }}]
+        apiVersions: [{{ .version | quote }}]
+        operations: {{ toJson .ops }}
+        resources: [{{ .resource | quote }}]
+  matchConditions:
+    - name: paguro-agent
+      expression: "request.userInfo.username == '{{ $agent }}'"
+  variables:
+    - name: node
+      expression: >-
+        'authentication.kubernetes.io/node-name' in request.userInfo.extra &&
+        size(request.userInfo.extra['authentication.kubernetes.io/node-name']) == 1 ?
+        request.userInfo.extra['authentication.kubernetes.io/node-name'][0] : ''
+    {{- if has "UPDATE" .ops }}
+    - name: oldAnnotations
+      expression: "oldObject.metadata.?annotations.orValue({})"
+    - name: newAnnotations
+      expression: "object.metadata.?annotations.orValue({})"
+    # Only annotations under paguro.dev/ were added, changed or removed.
+    - name: onlyPaguroAnnotations
+      expression: >-
+        variables.newAnnotations.all(k, k.startsWith('paguro.dev/') ||
+          (k in variables.oldAnnotations && variables.oldAnnotations[k] == variables.newAnnotations[k])) &&
+        variables.oldAnnotations.all(k, k.startsWith('paguro.dev/') || k in variables.newAnnotations)
+    - name: metadataKept
+      expression: >-
+        object.metadata.?labels == oldObject.metadata.?labels &&
+        object.metadata.?ownerReferences == oldObject.metadata.?ownerReferences &&
+        object.metadata.?finalizers == oldObject.metadata.?finalizers
+    {{- end }}
+  validations:
+    - expression: "variables.node != ''"
+      message: >-
+        paguro-agent: the request carries no node identity (needs a pod-bound
+        service account token, Kubernetes >= 1.30)
+    - expression: |-
+        {{- .rule | nindent 8 }}
+      messageExpression: {{ .message | quote }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: paguro-agent-{{ .name }}
+  labels:
+    {{- include "paguro.labels" $ | nindent 4 }}
+spec:
+  policyName: paguro-agent-{{ .name }}
+  validationActions: [Deny]
+{{- end }}
+{{- end }}

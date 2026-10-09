@@ -1,0 +1,311 @@
+# Paguro – live migration of running Kubernetes pods.
+#
+#   helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version <version> \
+#     -n paguro-system --create-namespace -f my-values.yaml
+#
+# Every value is documented in the chart's README (tables by area) and
+# validated by values.schema.json; unknown keys are refused. Examples for
+# common setups (EKS with Karpenter, Cilium, Calico, a minimal install):
+# https://github.com/DPicillo/paguro/tree/main/deploy/helm/paguro/examples
+#
+# The release namespace must allow privileged pods: the agent runs privileged
+# with hostPID and hostNetwork. Namespaces made by --create-namespace carry no
+# Pod Security labels; if the cluster enforces "baseline" or "restricted" by
+# default, label it first:
+#   kubectl label ns paguro-system pod-security.kubernetes.io/enforce=privileged
+
+global:
+  # Registry prefix of the three images (<registry>/<name>:<tag>). The
+  # published chart pulls from ghcr.io/dpicillo/paguro; set your mirror here
+  # (ECR, Harbor, …). The chart in the source tree points at a development
+  # registry.
+  imageRegistry: localhost:5000/paguro
+  # Tag of all images; empty: the chart's appVersion.
+  imageTag: ""
+  imagePullPolicy: IfNotPresent
+  # Pull secrets for a private registry or mirror.
+  imagePullSecrets: []
+  # - name: regcred
+
+# The controller: preflight checks, target selection, the pod and eviction
+# webhooks and the Migration status. Runs without privileges.
+controller:
+  image:
+    name: paguro-controller
+    repository: ""   # full repository; overrides global.imageRegistry and name
+    tag: ""          # empty: global.imageTag
+  # Every replica serves the webhooks; one (the leader) runs the migrations.
+  # With two, the webhooks stay reachable while one restarts – during a helm
+  # upgrade, for instance. The webhooks fail open: pods created while they are
+  # unreachable start without Paguro's settings and are reported (event
+  # NotMutated). 1 is fine for tests; leaderElect must stay true with more
+  # than one.
+  replicas: 2
+  leaderElect: true
+  # debug, info, error or a verbosity number.
+  logLevel: info
+  # Migrations that move pods off one node at a time; further ones wait in
+  # phase Pending while their pods run on. A drain evicts every pod at once,
+  # and pods frozen and restored together wait for each other's sandboxes
+  # (eleven at once: freezes up to 21 s; one at a time: 0.7 s). 0: no bound.
+  migrationsPerNode: 3
+  # How long a migration that an eviction started waits for a node to move
+  # to. Karpenter launches a node for the pods of a node it deletes (or one
+  # that got a spot interruption warning) while it drains the old one; on EC2
+  # it is ready after about 50 s. After the wait the eviction goes through as
+  # without Paguro. 0: no wait.
+  evictionTargetWait: 2m
+  extraArgs: []
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  nodeSelector: {}
+  # By default the controller may run on control-plane nodes.
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  affinity: {}
+  priorityClassName: ""
+  # prometheus.io/port follows ports.metrics unless it is set here.
+  podAnnotations:
+    prometheus.io/scrape: "true"
+  ports:
+    webhook: 9443
+    metrics: 8080
+    probes: 8081
+
+# The agent (DaemonSet): checkpoints, transfers and restores the pods of its
+# node. Privileged, with hostPID and hostNetwork – see SECURITY.md.
+agent:
+  image:
+    name: paguro-agent
+    repository: ""
+    tag: ""
+  # Run the agent (and the node installer) only on nodes labelled
+  # paguro.dev/enabled=true. Pods migrate only between such nodes.
+  onlyLabelledNodes: false
+  nodeSelector: {}
+  # The agent must run everywhere a migratable pod may run, tainted nodes
+  # included.
+  tolerations:
+    - operator: Exists
+  affinity: {}
+  priorityClassName: system-node-critical
+  # Host-network ports on every node.
+  ports:
+    transfer: 9555
+    metrics: 9556
+    health: 9557
+  # The CPU request is the agent's weight when the node is busy – and that of
+  # CRIU and the compression, which run in the agent's cgroup: with 50m a
+  # pre-copy on a saturated 2-vCPU node copied 16–37 MiB/s against a workload
+  # requesting 800m. Raise it on busy nodes and for large pods; it is reserved
+  # on every node.
+  # No memory limit by default. The page cache of the checkpoints the agent
+  # receives is charged to its cgroup; under a limit the kernel evicts it as
+  # it arrives, and the restore reads it back from disk (Minecraft with 2 GB
+  # of images and a 1 GiB limit: the server stood still for 6 s after the
+  # restore; without the limit, 0.2–0.3 s). The agent's own memory is about
+  # 50 MB. Where a policy requires a limit, leave room for the largest
+  # migrated pod's memory on top.
+  resources:
+    requests: {cpu: 200m, memory: 64Mi}
+    limits: {}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 1}
+  # On SIGTERM (upgrade, uninstall) the agent lets the migrations on its node
+  # finish first – at most this long – and its node is chosen for no new one
+  # meanwhile. The pod's terminationGracePeriodSeconds is 15 s longer.
+  drainTimeoutSeconds: 600
+  extraArgs: []
+  # Host directories. Checkpoints are staged in stateDir, mounted at the same
+  # path because paguro-runc reads them outside the pod.
+  stateDir: /var/lib/paguro
+  runDir: /run/paguro
+  # kubelet's data directory on the nodes (some distributions move it).
+  kubeletDir: /var/lib/kubelet
+  # Failure tests only: honour the paguro.dev/test-fault annotation on
+  # Migrations (makes a migration fail at a named point). Never in production.
+  testFaults: false
+  # Mutual TLS for the agent-to-agent transfer (memory images, files,
+  # volumes). Every agent holds a certificate for its own node, requested
+  # through the certificates.k8s.io API (signer paguro.dev/agent) and signed by
+  # the controller only for the node the agent's token is bound to; the CA
+  # stays with the controller (Secret paguro-agent-ca). A target takes a
+  # migration's data only from its source node. Disable only on an isolated
+  # network; agents with and without TLS do not migrate between each other.
+  transferTLS:
+    enabled: true
+  # Attach RWO volumes to the target node during pre-copy, so that the attach
+  # leaves the freeze (multi-attach volume types only, e.g. EBS io2, Cinder
+  # multiattach). Grants the agents create/delete on VolumeAttachments – the
+  # admission policy below limits that to each agent's own node, but a
+  # compromised node could still attach any volume to itself. Off by default.
+  preAttach:
+    enabled: false
+  # ValidatingAdmissionPolicy (Kubernetes >= 1.30) that holds every agent to
+  # what it needs: its own Node and CiliumNode annotations, Paguro's
+  # replacement pods, migrations of its node, VolumeAttachments of its node.
+  # Without it, the agent's service account token – on every node – could
+  # change any pod or node in the cluster.
+  restrictionPolicy:
+    enabled: true
+  # Shared secret of the agent-to-agent transfer, generated once and kept
+  # across upgrades. existingSecret: use your own Secret (key "token").
+  token:
+    existingSecret: ""
+
+# The node installer (init container of every agent pod) prepares its node
+# before the agent starts: CRIU 4.2.1 (with nftables, shipped when the host
+# has none), nft, crictl, /etc/criu/runc.conf, paguro-runc and the containerd
+# runtime handler. Idempotent: it changes nothing on a node that is already
+# prepared, and a node that does not qualify reports why in the init
+# container's log. Disable it if the nodes are provisioned otherwise
+# (Ansible, image build); the agent then only copies paguro-runc.
+nodeInstaller:
+  enabled: true
+  image:
+    name: paguro-node-installer
+    repository: ""
+    tag: ""
+  # Restart containerd when the runtime handler had to be added. Running
+  # containers survive (shim + KillMode=process), kubelet reconnects.
+  # false: the installer stops with a message instead.
+  restartContainerd: true
+  # Host CRIU accepted from this version on; older or none: the bundled CRIU.
+  criuMinVersion: "4.0"
+  # Fail on nodes without soft-dirty tracking (kernels without
+  # CONFIG_MEM_SOFT_DIRTY) instead of only warning – without it there is no
+  # pre-copy, and all memory is copied during the freeze.
+  requirePrecopy: false
+  containerd:
+    # All empty: detected from the running containerd process (binary,
+    # --config argument, systemd unit from its cgroup).
+    binary: ""
+    configPath: ""
+    unit: ""
+    # Drop-in directory used when the main config has no imports glob yet.
+    # Empty: <config dir>/conf.d
+    dropInDir: ""
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 256Mi}
+
+# The RuntimeClass that migratable pods get (an own time namespace, so that
+# monotonic clocks keep running after a move; Multipath TCP off).
+runtimeClass:
+  # Create the RuntimeClass. Skipped if one with this name already exists
+  # that this release did not create.
+  create: true
+  name: paguro
+  # containerd runtime handler (configured by the node installer).
+  handler: paguro
+
+# The admission webhooks for pods and evictions.
+webhook:
+  # Ignore: a failing controller must never block pod creation in the
+  # cluster. A missed replacement pod makes the migration fail (cold start).
+  failurePolicy: Ignore
+  timeoutSeconds: 5
+  # Namespaces the webhooks never see (the release namespace is always added).
+  excludeNamespaces:
+    - kube-system
+  # Additional namespaceSelector matchExpressions (e.g. opt-in by label).
+  extraNamespaceSelector: []
+  # Turn the eviction of a migratable pod into a migration: kubectl drain,
+  # Karpenter (consolidation, drift, spot interruptions), the Cluster
+  # Autoscaler and managed node group upgrades then move such pods instead of
+  # restarting them. The evicter is asked to retry (429) while the pod
+  # migrates; if the migration fails, the next eviction goes through as usual.
+  evictions: true
+
+crds:
+  # Install and upgrade the Migration CRD with the chart (kept on uninstall).
+  # Set to false if CRDs are managed separately.
+  install: true
+
+# CPU baseline: the CPU features a migratable pod's runtimes may use, fixed
+# when the pod is created. Its containers start with glibc, Go, OpenSSL, the
+# JVM, .NET and PyTorch limited to it, so the pod can later move to a node
+# with an older or a different CPU.
+#   auto       – the features all nodes with a Paguro agent share
+#   x86-64-v1 … x86-64-v4 – a fixed level, for clusters whose node types
+#                change (nodes added later are covered too)
+#   off        – no baseline: a pod only moves to nodes that offer every
+#                feature of the CPU it runs on
+cpuBaseline: auto
+
+# Phantom mode: where the pod IP cannot be kept (AWS VPC CNI, Flannel,
+# Antrea, …) the pod gets a new IP, and eBPF programs on the nodes translate
+# the old address of every migrated in-cluster connection. They attach at
+# the tc hooks: needs a bpffs at /sys/fs/bpf (default on current
+# distributions) and kernel 6.6+ (TCX) or tc clsact.
+phantom:
+  # The agents load the translator; network mode Auto uses Phantom mode
+  # (instead of closing connections) when every node supports it.
+  enabled: true
+  # Extra prefixes that belong to the cluster, if the CNI does not publish
+  # its pod ranges (node podCIDRs, Cilium/Calico IP pools and Service CIDRs
+  # are detected). Connections to anything else cannot be kept.
+  clusterCIDRs: []
+  # The bit of the packet mark that routes forwarded migrated connections
+  # (pods behind a ClusterIP, NodePort clients) on to the pod's new address.
+  # Set by the agent's nftables chain on those connections' packets only, and
+  # cleared right after the routing decision. The default is outside the bits
+  # of kube-proxy, Cilium, Calico and the AWS VPC CNI; change it only if
+  # something else on the nodes uses it.
+  steeringMark: "0x2000"
+
+cni:
+  # auto | cilium | calico | generic. The controller detects the CNI by its
+  # CRDs; this hint controls what the chart renders (the Cilium socket mount
+  # for the agent) and is passed to the controller.
+  #   cilium/calico: the pod IP and every connection survive the migration
+  #   generic:       new IP (Phantom mode where possible)
+  adapter: auto
+  # IPv4 range for the kept /32 addresses of migratable pods on Cilium
+  # (multi-pool IPAM). Must not overlap the pod, node or VPC ranges.
+  stickyCIDR: 10.250.0.0/16
+  # Cilium agent API socket on the host (fast hand-over of kept addresses).
+  ciliumSocketDir: /var/run/cilium
+
+# Commit gate: a Dynamic Resource Allocation driver in the agent that holds a
+# replacement pod right before kubelet creates its sandbox, so the sandbox is
+# created the moment a migration with a kept IP commits – not behind
+# kubelet's sync loop (about 0.6 s less freeze). Needs Kubernetes >= 1.34
+# (resource.k8s.io/v1); without it, or disabled, replacements are released
+# after the final dump.
+commitGate:
+  enabled: true
+  # Cilium: the replacement's sandbox is created while the final dump runs
+  # (the source is paused), not after the commit (about 0.15 s less freeze).
+  # A rollback gives the address back to the source by re-announcing its
+  # CiliumEndpoint.
+  earlyHandOver: true
+
+# Agones game servers: GameServer pods move with their game state; Agones
+# keeps the GameServer (same name, Allocated stays Allocated) and learns its
+# new node. auto: on when the GameServer API exists at install time (install
+# Agones first, or set true). Needs Kubernetes >= 1.30.
+agones:
+  enabled: auto
+
+# Monitoring. auto: on when the Prometheus Operator's API exists at install
+# time.
+monitoring:
+  # Alert rules (PrometheusRule).
+  prometheusRule:
+    enabled: auto
+    labels: {}     # e.g. release: kube-prometheus-stack (the operator's ruleSelector)
+  # Scrape configuration for the controller and the agents (PodMonitor).
+  podMonitor:
+    enabled: auto
+    labels: {}
+  # Grafana dashboard as a ConfigMap for Grafana's dashboard sidecar.
+  grafanaDashboard:
+    enabled: false
+    namespace: ""  # default: the release namespace
+    labels:
+      grafana_dashboard: "1"

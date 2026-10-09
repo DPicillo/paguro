@@ -1,0 +1,152 @@
+From f5442e10fa7893ddd47e63bdbce41de69273a262 Mon Sep 17 00:00:00 2001
+From: Paguro <paguro@example.invalid>
+Date: Tue, 6 Oct 2026 20:12:05 +0200
+Subject: [PATCH] pagemap: binary search in seek_pagemap
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The lazy-pages daemon resets the page-read before every page fault
+(uffd_seek_pages) and seek_pagemap() then scans the pagemap entries from
+the start – in each image of a pre-dump chain, since in-parent entries are
+looked up again in the parent. With a task of 8 GiB whose memory was
+dirtied all over (hundreds of thousands of entries), the daemon spent
+about 20 ms of CPU per fault: the restored task got some 50 pages a second
+and stalled.
+
+Entries are written in ascending vaddr order. Compute, once per
+page-read, the offset of each entry's pages in the pages image and find
+the entry by binary search; the position after a miss is the one the
+linear scan stops at. Page-reads whose entries are not sorted keep the
+linear scan.
+
+Signed-off-by: Paguro <paguro@example.invalid>
+---
+ criu/include/pagemap.h |  1 +
+ criu/pagemap.c         | 75 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 76 insertions(+)
+
+diff --git a/criu/include/pagemap.h b/criu/include/pagemap.h
+index 4cbc87c..55c0579 100644
+--- a/criu/include/pagemap.h
++++ b/criu/include/pagemap.h
+@@ -79,6 +79,7 @@ struct page_read {
+ 	PagemapEntry **pmes;
+ 	int nr_pmes;
+ 	int curr_pme;
++	off_t *pi_offs; /* pi_off at the start of each entry; NULL unless sorted by vaddr */
+ 
+ 	struct list_head async;
+ };
+diff --git a/criu/pagemap.c b/criu/pagemap.c
+index 7575ac9..7d92009 100644
+--- a/criu/pagemap.c
++++ b/criu/pagemap.c
+@@ -143,8 +143,58 @@ static void skip_pagemap_pages(struct page_read *pr, unsigned long len)
+ 	pr->cvaddr += len;
+ }
+ 
++/*
++ * Position pr on the entry that contains vaddr – or, if none does, on the
++ * first entry after it – by binary search over the entries (sorted by
++ * vaddr, pi_offs computed in init_pagemaps()). The lazy-pages daemon
++ * resets the page-read before every fault and used to scan all entries
++ * from the start, in every image of a pre-dump chain: with an 8 GiB task
++ * whose memory was dirtied all over, faults took milliseconds each and the
++ * restored task barely moved.
++ */
++static int bsearch_pagemap(struct page_read *pr, unsigned long vaddr)
++{
++	int lo = 0, hi = pr->nr_pmes - 1, idx = -1;
++
++	while (lo <= hi) {
++		int mid = lo + (hi - lo) / 2;
++
++		if (pr->pmes[mid]->vaddr <= vaddr) {
++			idx = mid;
++			lo = mid + 1;
++		} else
++			hi = mid - 1;
++	}
++
++	if (idx >= 0 && vaddr < pr->pmes[idx]->vaddr + pagemap_len(pr->pmes[idx])) {
++		pr->curr_pme = idx;
++		pr->pe = pr->pmes[idx];
++		pr->cvaddr = pr->pe->vaddr;
++		pr->pi_off = pr->pi_offs[idx];
++		skip_pagemap_pages(pr, vaddr - pr->cvaddr);
++		return 1;
++	}
++
++	/* Not covered: stop where the linear scan would have stopped. */
++	if (idx + 1 < pr->nr_pmes) {
++		pr->curr_pme = idx + 1;
++		pr->pe = pr->pmes[idx + 1];
++		pr->cvaddr = pr->pe->vaddr;
++		pr->pi_off = pr->pi_offs[idx + 1];
++	} else if (pr->nr_pmes > 0) {
++		pr->curr_pme = pr->nr_pmes;
++		pr->pe = pr->pmes[pr->nr_pmes - 1];
++		pr->cvaddr = pr->pe->vaddr + pagemap_len(pr->pe);
++		pr->pi_off = pr->pi_offs[pr->nr_pmes - 1] + (pagemap_present(pr->pe) ? pagemap_len(pr->pe) : 0);
++	}
++	return 0;
++}
++
+ static int seek_pagemap(struct page_read *pr, unsigned long vaddr)
+ {
++	if (pr->pi_offs)
++		return bsearch_pagemap(pr, vaddr);
++
+ 	if (!pr->pe)
+ 		goto adv;
+ 
+@@ -514,6 +564,8 @@ static void free_pagemaps(struct page_read *pr)
+ 
+ 	xfree(pr->pmes);
+ 	pr->pmes = NULL;
++	xfree(pr->pi_offs);
++	pr->pi_offs = NULL;
+ }
+ 
+ static void advance_piov(struct page_read_iov *piov, ssize_t len)
+@@ -762,6 +814,28 @@ static int init_pagemaps(struct page_read *pr)
+ 	close_image(pr->pmi);
+ 	pr->pmi = NULL;
+ 
++	/*
++	 * Offsets of the entries' pages in the pages image, for
++	 * bsearch_pagemap(). Entries are written in ascending vaddr order;
++	 * anything else keeps the linear scan.
++	 */
++	pr->pi_offs = xmalloc((pr->nr_pmes + 1) * sizeof(*pr->pi_offs));
++	if (pr->pi_offs) {
++		off_t off = 0;
++		int i;
++
++		for (i = 0; i < pr->nr_pmes; i++) {
++			if (i > 0 && pr->pmes[i]->vaddr < pr->pmes[i - 1]->vaddr + pagemap_len(pr->pmes[i - 1])) {
++				xfree(pr->pi_offs);
++				pr->pi_offs = NULL;
++				break;
++			}
++			pr->pi_offs[i] = off;
++			if (pagemap_present(pr->pmes[i]))
++				off += pagemap_len(pr->pmes[i]);
++		}
++	}
++
+ 	return 0;
+ 
+ free_pagemaps:
+@@ -807,6 +881,7 @@ int open_page_read_at(int dfd, unsigned long img_id, struct page_read *pr, int p
+ 	pr->bunch.iov_len = 0;
+ 	pr->bunch.iov_base = NULL;
+ 	pr->pmes = NULL;
++	pr->pi_offs = NULL;
+ 	pr->pieok = false;
+ 	pr->disable_dedup = false;
+ 
+-- 
+2.47.3
+

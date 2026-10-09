@@ -1,0 +1,19 @@
+# Calico with calico-ipam (tested with VXLAN; IPIP, BGP and the eBPF
+# dataplane not run yet): a migrated pod keeps its IP, and every TCP
+# connection and UDP flow survives, also to peers outside the cluster.
+#
+# Keeping the IP costs Calico's own CNI calls inside the freeze (measured
+# 1.23–1.58 s for small pods). Where a pod's IP need not stay, Phantom mode is
+# faster on Calico (0.36–0.90 s): annotate its pod template with
+# paguro.dev/network: phantom.
+#
+#   helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.0 \
+#     -n paguro-system --create-namespace -f calico.yaml
+
+cni:
+  adapter: calico
+
+commitGate:
+  # Kubernetes 1.34 or later: the replacement gets its sandbox the moment
+  # the migration commits.
+  enabled: true

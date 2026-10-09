@@ -1,0 +1,14 @@
+{{- if and (dig "enabled" true (.Values.commitGate | default dict)) (.Capabilities.APIVersions.Has "resource.k8s.io/v1/DeviceClass") }}
+# Commit gate: the DRA device class of the claims Paguro gives replacement
+# pods. Only Paguro allocates them; nothing is injected into containers.
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: gate.paguro.dev
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+spec:
+  selectors:
+    - cel:
+        expression: 'device.driver == "gate.paguro.dev"'
+{{- end }}

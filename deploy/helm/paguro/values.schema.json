@@ -1,0 +1,635 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "paguro chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "image": {
+      "type": "object",
+      "description": "An image: <global.imageRegistry>/<name>:<tag>, or <repository>:<tag>.",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Image name, appended to global.imageRegistry.",
+          "minLength": 1
+        },
+        "repository": {
+          "type": "string",
+          "description": "Full repository; overrides global.imageRegistry and name."
+        },
+        "tag": {
+          "type": "string",
+          "description": "Image tag; empty: global.imageTag, then the chart's appVersion."
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "description": "CPU and memory requests and limits.",
+      "additionalProperties": false,
+      "properties": {
+        "requests": {
+          "type": "object",
+          "description": "Resource requests (cpu, memory).",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number"
+            ]
+          }
+        },
+        "limits": {
+          "type": "object",
+          "description": "Resource limits (cpu, memory).",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number"
+            ]
+          }
+        }
+      }
+    },
+    "port": {
+      "type": "integer",
+      "description": "A TCP port.",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "stringMap": {
+      "type": "object",
+      "description": "A map of strings.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tolerations": {
+      "type": "array",
+      "description": "Kubernetes tolerations.",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "properties": {
+    "global": {
+      "type": "object",
+      "description": "Shared with the other charts of an umbrella chart: keys of theirs are allowed, Paguro's own are validated.",
+      "properties": {
+        "imageRegistry": {
+          "type": "string",
+          "description": "Registry prefix of the three images: <registry>/<name>:<tag>. The published chart pulls from ghcr.io/dpicillo/paguro; set a mirror (ECR, Harbor) here."
+        },
+        "imageTag": {
+          "type": "string",
+          "description": "Tag of all three images; empty: the chart's appVersion."
+        },
+        "imagePullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ],
+          "description": "Pull policy of all images."
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "description": "Pull secrets for a private registry or mirror, as a list of {name: <secret>}.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "controller": {
+      "type": "object",
+      "description": "The controller: preflight, target selection, the pod and eviction webhooks, the Migration status.",
+      "additionalProperties": false,
+      "properties": {
+        "migrationsPerNode": {
+          "type": "integer",
+          "description": "Migrations that move pods off one node at a time; further ones wait in phase Pending while their pods run on. 0: no bound.",
+          "minimum": 0
+        },
+        "evictionTargetWait": {
+          "type": "string",
+          "description": "How long a migration started by an eviction waits for a node to move to – Karpenter launches one while it drains a node (Go duration; 0: no wait). Then the eviction goes through as without Paguro.",
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$|^0$"
+        },
+        "image": {
+          "$ref": "#/definitions/image",
+          "description": "Image of the controller."
+        },
+        "replicas": {
+          "type": "integer",
+          "description": "Controller replicas. Every replica serves the webhooks and the leader runs the migrations; two keep the webhooks reachable while one restarts (helm upgrade). 1 is fine for tests.",
+          "minimum": 1
+        },
+        "leaderElect": {
+          "type": "boolean",
+          "description": "Leader election between the replicas; must stay true with more than one."
+        },
+        "logLevel": {
+          "type": "string",
+          "description": "Log level: debug, info, error or a verbosity number.",
+          "pattern": "^(debug|info|error|[0-9]+)$"
+        },
+        "extraArgs": {
+          "type": "array",
+          "description": "Additional command-line arguments of the controller.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resources": {
+          "$ref": "#/definitions/resources",
+          "description": "Requests and limits of the controller."
+        },
+        "nodeSelector": {
+          "$ref": "#/definitions/stringMap",
+          "description": "Node selector of the controller pods."
+        },
+        "tolerations": {
+          "$ref": "#/definitions/tolerations",
+          "description": "Tolerations of the controller pods; by default they may run on control-plane nodes."
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Affinity of the controller pods."
+        },
+        "priorityClassName": {
+          "type": "string",
+          "description": "Priority class of the controller pods."
+        },
+        "podAnnotations": {
+          "$ref": "#/definitions/stringMap",
+          "description": "Annotations of the controller pods; prometheus.io/port follows ports.metrics unless set here."
+        },
+        "ports": {
+          "type": "object",
+          "description": "Container ports of the controller.",
+          "additionalProperties": false,
+          "properties": {
+            "webhook": {
+              "$ref": "#/definitions/port",
+              "description": "Port of the admission webhooks (pods, evictions)."
+            },
+            "metrics": {
+              "$ref": "#/definitions/port",
+              "description": "Port of the Prometheus metrics."
+            },
+            "probes": {
+              "$ref": "#/definitions/port",
+              "description": "Port of the liveness and readiness probes."
+            }
+          }
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "description": "The agent DaemonSet: checkpoints, transfers and restores pods on its node.",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "$ref": "#/definitions/image",
+          "description": "Image of the agent."
+        },
+        "onlyLabelledNodes": {
+          "type": "boolean",
+          "description": "Run the agent and the node installer only on nodes labelled paguro.dev/enabled=true; pods migrate only between such nodes."
+        },
+        "nodeSelector": {
+          "$ref": "#/definitions/stringMap",
+          "description": "Node selector of the agent DaemonSet."
+        },
+        "tolerations": {
+          "$ref": "#/definitions/tolerations",
+          "description": "Tolerations of the agent DaemonSet. The agent must run on every node a migratable pod may run on, tainted nodes included."
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Affinity of the agent DaemonSet."
+        },
+        "priorityClassName": {
+          "type": "string",
+          "description": "Priority class of the agent pods."
+        },
+        "ports": {
+          "type": "object",
+          "description": "Ports of the agent on the host network.",
+          "additionalProperties": false,
+          "properties": {
+            "transfer": {
+              "$ref": "#/definitions/port",
+              "description": "Port of the agent-to-agent transfer (host network)."
+            },
+            "metrics": {
+              "$ref": "#/definitions/port",
+              "description": "Port of the agent's Prometheus metrics (host network)."
+            },
+            "health": {
+              "$ref": "#/definitions/port",
+              "description": "Port of the agent's health probes (host network)."
+            }
+          }
+        },
+        "resources": {
+          "$ref": "#/definitions/resources",
+          "description": "Requests and limits of the agent. The CPU request is the agent's and CRIU's weight on a busy node, and so the pre-copy's speed there. No memory limit by default: it would evict received checkpoints from the page cache and slow the restore."
+        },
+        "updateStrategy": {
+          "type": "object",
+          "description": "Update strategy of the agent DaemonSet."
+        },
+        "drainTimeoutSeconds": {
+          "type": "integer",
+          "description": "On SIGTERM (upgrade, uninstall), how long the agent lets the migrations on its node finish; its terminationGracePeriodSeconds is 15 s longer.",
+          "minimum": 0
+        },
+        "extraArgs": {
+          "type": "array",
+          "description": "Additional command-line arguments of the agent.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stateDir": {
+          "type": "string",
+          "description": "Host directory where checkpoints are staged; mounted at the same path, because paguro-runc reads them outside the pod.",
+          "pattern": "^/"
+        },
+        "runDir": {
+          "type": "string",
+          "description": "Host directory for the runtime files of the agent and paguro-runc.",
+          "pattern": "^/"
+        },
+        "token": {
+          "type": "object",
+          "description": "Shared token of the agent-to-agent transfer.",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {
+              "type": "string",
+              "description": "Secret with the agents' shared token (key \"token\"); empty: generated once and kept across upgrades."
+            }
+          }
+        },
+        "kubeletDir": {
+          "type": "string",
+          "description": "kubelet's data directory on the nodes (some distributions move it)."
+        },
+        "testFaults": {
+          "type": "boolean",
+          "description": "Failure tests only: honour the paguro.dev/test-fault annotation, which makes a migration fail at a named point. Never in production."
+        },
+        "transferTLS": {
+          "type": "object",
+          "description": "Mutual TLS between the agents.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Mutual TLS for the agent-to-agent transfer, with a certificate per node that the controller signs only for that node. Disable only on an isolated network; agents with and without TLS do not migrate between each other."
+            }
+          }
+        },
+        "preAttach": {
+          "type": "object",
+          "description": "Pre-attach of RWO volumes.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Attach RWO volumes to the target node during pre-copy, so that the attach leaves the freeze (multi-attach volume types only, e.g. EBS io2, Cinder multiattach). Grants the agents create and delete on VolumeAttachments."
+            }
+          }
+        },
+        "restrictionPolicy": {
+          "type": "object",
+          "description": "Admission policies for the agents.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "ValidatingAdmissionPolicy that holds every agent to its own node: its Node, its migrations, its VolumeAttachments (Kubernetes 1.30 or later; skipped before)."
+            }
+          }
+        }
+      }
+    },
+    "nodeInstaller": {
+      "type": "object",
+      "description": "The node installer (init container of the agent): prepares each node and reports what is missing.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Prepare every node before the agent starts: CRIU, nftables, crictl, paguro-runc and the containerd runtime handler. false if the nodes are prepared otherwise (Ansible, image build)."
+        },
+        "image": {
+          "$ref": "#/definitions/image",
+          "description": "Image of the node installer."
+        },
+        "restartContainerd": {
+          "type": "boolean",
+          "description": "Restart containerd when the runtime handler had to be added; running containers survive. false: the installer stops with a message instead."
+        },
+        "criuMinVersion": {
+          "type": "string",
+          "description": "Oldest host CRIU accepted; with an older one, or none, the bundled CRIU is used.",
+          "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"
+        },
+        "requirePrecopy": {
+          "type": "boolean",
+          "description": "Fail on nodes without soft-dirty tracking instead of warning (there, without pre-copy, all memory is copied during the freeze)."
+        },
+        "containerd": {
+          "type": "object",
+          "description": "Where containerd is; empty fields are detected from the running containerd.",
+          "additionalProperties": false,
+          "properties": {
+            "binary": {
+              "type": "string",
+              "description": "Path of the containerd binary; empty: detected from the running process.",
+              "pattern": "^(/.*)?$"
+            },
+            "configPath": {
+              "type": "string",
+              "description": "Path of containerd's config.toml; empty: from the process's --config argument.",
+              "pattern": "^(/.*)?$"
+            },
+            "unit": {
+              "type": "string",
+              "description": "systemd unit of containerd; empty: detected from its cgroup."
+            },
+            "dropInDir": {
+              "type": "string",
+              "description": "Drop-in directory used when config.toml has no imports glob yet; empty: <config dir>/conf.d.",
+              "pattern": "^(/.*)?$"
+            }
+          }
+        },
+        "resources": {
+          "$ref": "#/definitions/resources",
+          "description": "Requests and limits of the node installer."
+        }
+      }
+    },
+    "runtimeClass": {
+      "type": "object",
+      "description": "The RuntimeClass of migratable pods.",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create the RuntimeClass; skipped if one with this name exists that this release did not create."
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the RuntimeClass that migratable pods get.",
+          "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+        },
+        "handler": {
+          "type": "string",
+          "description": "containerd runtime handler of the RuntimeClass, configured by the node installer.",
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+        }
+      }
+    },
+    "webhook": {
+      "type": "object",
+      "description": "The admission webhooks for pods and evictions.",
+      "additionalProperties": false,
+      "properties": {
+        "failurePolicy": {
+          "enum": [
+            "Ignore",
+            "Fail"
+          ],
+          "description": "Failure policy of the pod webhook. Ignore: an unreachable controller never blocks pod creation; pods created meanwhile are reported as NotMutated."
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "description": "Timeout of the webhook calls in seconds.",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "excludeNamespaces": {
+          "type": "array",
+          "description": "Namespaces the webhooks never see; the release namespace is always added.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extraNamespaceSelector": {
+          "type": "array",
+          "description": "Additional matchExpressions for the webhooks' namespaceSelector, e.g. to opt namespaces in by label.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "evictions": {
+          "type": "boolean",
+          "description": "Turn evictions of migratable pods into migrations: kubectl drain, Karpenter, the Cluster Autoscaler and node group upgrades then move such pods instead of restarting them."
+        }
+      }
+    },
+    "cni": {
+      "type": "object",
+      "description": "How pod addresses move.",
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "enum": [
+            "auto",
+            "cilium",
+            "calico",
+            "generic"
+          ],
+          "description": "CNI adapter: auto (detected by the controller from the CNI's CRDs), cilium, calico or generic. The chart renders the Cilium socket mount for auto and cilium."
+        },
+        "stickyCIDR": {
+          "type": "string",
+          "description": "IPv4 range for the kept /32 addresses of migratable pods on Cilium (multi-pool IPAM); must not overlap the pod, node or VPC ranges.",
+          "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}/[0-9]{1,2}$"
+        },
+        "ciliumSocketDir": {
+          "type": "string",
+          "description": "Directory of the Cilium agent's API socket on the host.",
+          "pattern": "^/"
+        }
+      }
+    },
+    "cpuBaseline": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "off",
+        "x86-64-v1",
+        "x86-64-v2",
+        "x86-64-v3",
+        "x86-64-v4"
+      ],
+      "description": "CPU features migratable pods may use, so that they can move between CPU generations: auto (shared by all nodes with an agent), x86-64-v1 to x86-64-v4 (a fixed level, for node types that change) or off (no baseline)."
+    },
+    "phantom": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Phantom mode: new pod IP, in-cluster connections kept by eBPF translation (docs/PHANTOM-MODE.md).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Load the Phantom-mode translator. Network mode Auto falls back to Phantom mode, instead of closing connections, when every node supports it."
+        },
+        "clusterCIDRs": {
+          "type": "array",
+          "description": "Extra prefixes that belong to the cluster, if the CNI does not publish its pod ranges (node podCIDRs, Cilium and Calico pools and Service CIDRs are detected).",
+          "items": {
+            "type": "string"
+          }
+        },
+        "steeringMark": {
+          "type": "string",
+          "description": "Bit of the packet mark that routes forwarded migrated connections (pods behind a ClusterIP, NodePort clients) to the new address, as hex. The default is outside the bits of kube-proxy, Cilium, Calico and the AWS VPC CNI.",
+          "pattern": "^0x0*[1-9a-fA-F][0-9a-fA-F]{0,7}$"
+        }
+      }
+    },
+    "crds": {
+      "type": "object",
+      "description": "The Migration CRD.",
+      "additionalProperties": false,
+      "properties": {
+        "install": {
+          "type": "boolean",
+          "description": "Install and upgrade the Migration CRD with the chart (kept on uninstall)."
+        }
+      }
+    },
+    "commitGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Commit gate (DRA driver): replacements wait right before their sandbox",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Commit gate, a DRA driver in the agent: a replacement that keeps the IP gets its sandbox the moment the migration commits, about 0.6 s less freeze (Kubernetes 1.34 or later)."
+        },
+        "earlyHandOver": {
+          "type": "boolean",
+          "description": "Cilium: create the replacement's sandbox while the final dump runs, about 0.15 s less freeze; a rollback gives the address back to the source."
+        }
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "description": "Prometheus Operator objects and the Grafana dashboard.",
+      "additionalProperties": false,
+      "properties": {
+        "prometheusRule": {
+          "type": "object",
+          "description": "Alert rules.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "auto"
+                  ]
+                }
+              ],
+              "description": "Alert rules as a PrometheusRule. auto: when the Prometheus Operator's API exists at install time."
+            },
+            "labels": {
+              "type": "object",
+              "description": "Labels of the PrometheusRule, e.g. release: kube-prometheus-stack for the operator's ruleSelector."
+            }
+          }
+        },
+        "podMonitor": {
+          "type": "object",
+          "description": "Scrape configuration.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "auto"
+                  ]
+                }
+              ],
+              "description": "PodMonitors for the controller and the agents. auto: when the Prometheus Operator's API exists at install time."
+            },
+            "labels": {
+              "type": "object",
+              "description": "Labels of the PodMonitors, for the operator's podMonitorSelector."
+            }
+          }
+        },
+        "grafanaDashboard": {
+          "type": "object",
+          "description": "Grafana dashboard.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "The Grafana dashboard as a ConfigMap for Grafana's dashboard sidecar."
+            },
+            "namespace": {
+              "type": "string",
+              "description": "Namespace of the dashboard ConfigMap; empty: the release namespace."
+            },
+            "labels": {
+              "type": "object",
+              "description": "Labels of the dashboard ConfigMap, for the sidecar's label selector."
+            }
+          }
+        }
+      }
+    },
+    "agones": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Agones game servers move with their GameServer",
+      "properties": {
+        "enabled": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "auto"
+              ]
+            }
+          ],
+          "description": "Agones integration: GameServers move with their game state and stay Allocated. auto: when the GameServer API exists at install time (Kubernetes 1.30 or later)."
+        }
+      }
+    }
+  }
+}

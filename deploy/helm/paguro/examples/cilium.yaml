@@ -1,0 +1,26 @@
+# Cilium with multi-pool IPAM (tested in tunnel mode, VXLAN): a migrated pod
+# keeps its IP, and every TCP connection and UDP flow survives, also to peers
+# outside the cluster.
+#
+# Paguro gives every migratable pod a /32 of its own from stickyCIDR, as a
+# CiliumPodIPPool, and hands it to the target node during the migration.
+# Pods annotated paguro.dev/network: phantom or generic get no sticky IP.
+# For outbound connections to peers outside the cluster, which Cilium
+# masquerades to the node's address, see the egress gateway example:
+# https://github.com/DPicillo/paguro/blob/main/deploy/examples/cilium-egress-anchor.yaml
+#
+#   helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.0 \
+#     -n paguro-system --create-namespace -f cilium.yaml
+
+cni:
+  adapter: cilium
+  # Range of the kept addresses; must overlap neither the pod CIDRs nor the
+  # node or VPC ranges.
+  stickyCIDR: 10.250.0.0/16
+
+commitGate:
+  # Kubernetes 1.34 or later: the replacement gets its sandbox the moment
+  # the migration commits.
+  enabled: true
+  # The replacement's sandbox is created while the final dump runs.
+  earlyHandOver: true

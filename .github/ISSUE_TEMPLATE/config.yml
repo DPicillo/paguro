@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/DPicillo/paguro/security/advisories/new
+    about: Report vulnerabilities privately, never in a public issue (SECURITY.md).
+  - name: Documentation
+    url: https://github.com/DPicillo/paguro/blob/main/docs/README.md
+    about: Installation, operations, CNIs, troubleshooting and known limitations.

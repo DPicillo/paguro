@@ -1,0 +1,169 @@
+apiVersion: v2
+name: paguro
+description: >-
+  Live migration of running Kubernetes pods with CRIU: memory, open files,
+  emptyDirs and PVCs move to another node while TCP connections and UDP
+  flows continue. Evictions (kubectl drain, Karpenter, Cluster Autoscaler)
+  become migrations.
+type: application
+version: 0.1.0
+appVersion: "v0.1.0"
+# Installed and checked on every minor version from 1.28 to 1.37 (kind,
+# hack/version-matrix.sh); migrations run on 1.37. The agents' admission
+# policies need 1.30 and the commit gate 1.34; both are skipped before.
+kubeVersion: ">=1.28.0-0"
+keywords:
+  - live-migration
+  - criu
+  - checkpoint
+  - restore
+  - containerd
+  - ebpf
+  - game-servers
+  - agones
+  - karpenter
+  - spot
+  - drain
+  - pod-migration
+  - zero-downtime
+  - eks
+home: https://github.com/DPicillo/paguro
+icon: https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/paguro.png
+sources:
+  - https://github.com/DPicillo/paguro
+maintainers:
+  - name: David Picillo
+    url: https://github.com/DPicillo
+# Artifact Hub builds the package page from this file's annotations, the
+# README (the page's main text), values.yaml and values.schema.json; check
+# with `ah lint --kind helm --path deploy/helm` (docs/RELEASING.md).
+annotations:
+  # None of Artifact Hub's categories (databases, networking, security,
+  # storage, …) fits live migration; skip-prediction keeps it from guessing
+  # one from the keywords.
+  artifacthub.io/category: skip-prediction
+  # Paguro is AGPL-3.0-only (LICENSE in this chart); third-party licenses
+  # and the source of the shipped CRIU bundle: docs/THIRD-PARTY.md.
+  artifacthub.io/license: AGPL-3.0-only
+  # Set by the release workflow from the tag (true for vX.Y.Z-rc.N).
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/containsSecurityUpdates: "false"
+  # Images and chart are signed with cosign (keyless, by the release
+  # workflow) and the images carry SPDX SBOM attestations; SECURITY.md shows
+  # how to verify them. No artifacthub.io/signKey: it describes a key for
+  # Helm provenance files, which keyless signing does not use. The release
+  # workflow sets the registry's owner and the version.
+  artifacthub.io/images: |
+    - name: paguro-controller
+      image: ghcr.io/dpicillo/paguro/paguro-controller:v0.1.0
+      platforms:
+        - linux/amd64
+    - name: paguro-agent
+      image: ghcr.io/dpicillo/paguro/paguro-agent:v0.1.0
+      platforms:
+        - linux/amd64
+    - name: paguro-node-installer
+      image: ghcr.io/dpicillo/paguro/paguro-node-installer:v0.1.0
+      platforms:
+        - linux/amd64
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Seamless Upgrades
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://github.com/DPicillo/paguro/tree/main/docs
+    - name: Installation
+      url: https://github.com/DPicillo/paguro/blob/main/docs/INSTALL.md
+    - name: The story behind Paguro
+      url: https://www.picillo.de/blog/kubernetes-pod-live-migration/
+    - name: Support
+      url: https://github.com/DPicillo/paguro/issues
+    - name: Changelog
+      url: https://github.com/DPicillo/paguro/blob/main/CHANGELOG.md
+    - name: Security
+      url: https://github.com/DPicillo/paguro/blob/main/SECURITY.md
+  artifacthub.io/crds: |
+    - kind: Migration
+      version: v1alpha1
+      name: migrations.paguro.dev
+      displayName: Migration
+      description: Moves one running pod to another node and reports how it went.
+  # Every field of the spec, with its default; only podName is required
+  # (targetNode, empty: Paguro picks a node).
+  artifacthub.io/crdsExamples: |
+    - apiVersion: paguro.dev/v1alpha1
+      kind: Migration
+      metadata:
+        name: move-game-server
+        namespace: games
+      spec:
+        podName: game-server-7d9f8-x2k4p
+        strategy: PreCopy
+        network: Auto
+        cpuPolicy: Strict
+        timeoutSeconds: 600
+        preCopy:
+          maxRounds: 8
+          dirtyPageThreshold: 2048
+          maxSeconds: 0
+          freezeBudgetMs: 500
+          autoConverge: true
+  artifacthub.io/changes: |
+    - kind: added
+      description: Live migration of running pods with CRIU pre-copy – memory, open files, root filesystem changes, emptyDirs and volumes move with the pod
+      links:
+        - name: How a migration works
+          url: https://github.com/DPicillo/paguro/blob/main/docs/ARCHITECTURE.md
+    - kind: added
+      description: Pod IP, TCP connections and UDP flows kept on Cilium (multi-pool IPAM) and Calico (calico-ipam)
+      links:
+        - name: Networks and CNIs
+          url: https://github.com/DPicillo/paguro/blob/main/docs/CNI.md
+    - kind: added
+      description: Phantom mode – a new pod IP, with in-cluster connections kept by eBPF translation, for any CNI (Flannel, Antrea, AWS VPC CNI and others)
+      links:
+        - name: Phantom mode
+          url: https://github.com/DPicillo/paguro/blob/main/docs/PHANTOM-MODE.md
+    - kind: added
+      description: Evictions become migrations – kubectl drain, Karpenter, the Cluster Autoscaler, managed node group upgrades; spot interruption deadlines on EC2
+      links:
+        - name: Drains and autoscalers
+          url: https://github.com/DPicillo/paguro/blob/main/docs/OPERATIONS.md#everyday-tasks
+    - kind: added
+      description: Amazon EKS with Amazon Linux 2023 nodes, the AWS VPC CNI and Karpenter
+      links:
+        - name: Amazon EKS
+          url: https://github.com/DPicillo/paguro/blob/main/docs/INSTALL.md#amazon-eks
+    - kind: added
+      description: Agones GameServers move with their game state and stay Allocated
+      links:
+        - name: Agones
+          url: https://github.com/DPicillo/paguro/blob/main/docs/AGONES.md
+    - kind: added
+      description: kubectl plugin – migrate, drain, list, describe, nodes, version
+      links:
+        - name: Releases
+          url: https://github.com/DPicillo/paguro/releases
+    - kind: added
+      description: Mutual TLS between agents, admission policies per node, signed images and chart with SBOM attestations
+      links:
+        - name: Security model
+          url: https://github.com/DPicillo/paguro/blob/main/SECURITY.md
+    - kind: added
+      description: Prometheus metrics, alert rules and a Grafana dashboard
+      links:
+        - name: Monitoring
+          url: https://github.com/DPicillo/paguro/blob/main/docs/OPERATIONS.md#monitoring
+  artifacthub.io/screenshots: |
+    - title: How a live migration works – pre-copy while the pod runs, then a short freeze for the final dump and the restore on the target node
+      url: https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/how-it-works.png
+    - title: Before – paguro-place, a WebSocket server with a 1 GiB canvas in memory and a 25 GiB RWO volume, runs on openstack6
+      url: https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/paguro-place-before.png
+    - title: During the move – the pod stands still while its RWO volume moves; the browser's connection stays open
+      url: https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/paguro-place-freeze.png
+    - title: After – the same process runs on openstack5, on the same TCP connection, without a reconnect
+      url: https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/paguro-place-after.png
+  artifacthub.io/recommendations: |
+    - url: https://artifacthub.io/packages/helm/aws-karpenter/karpenter
+    - url: https://artifacthub.io/packages/helm/agones/agones
+    - url: https://artifacthub.io/packages/helm/cilium/cilium
+    - url: https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack

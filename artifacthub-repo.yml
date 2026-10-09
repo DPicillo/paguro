@@ -1,0 +1,9 @@
+# Artifact Hub repository metadata for the OCI chart repository
+# oci://ghcr.io/dpicillo/charts/paguro (registered on artifacthub.io as
+# "paguro", disabled until the release is public). `make artifacthub-push`
+# pushes it as the tag "artifacthub.io" next to the chart – the release
+# workflow does so with every release; Artifact Hub then shows the
+# repository as from a verified publisher. No `owners`:
+# they only serve to claim a repository that someone else added, and need
+# the e-mail address of the Artifact Hub account.
+repositoryID: 55d5ce84-148a-4fb4-9649-2bd58cad3a46

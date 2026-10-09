@@ -1,0 +1,23 @@
+# A small test cluster: one controller replica, the agent only on the nodes
+# you label, no Prometheus Operator objects. Everything else keeps its
+# default: the node installer prepares the labelled nodes, the network mode
+# follows the CNI.
+#
+#   kubectl label node <node-a> <node-b> paguro.dev/enabled=true
+#   helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.0 \
+#     -n paguro-system --create-namespace -f minimal.yaml
+
+controller:
+  # One is fine for tests; two keep the webhooks reachable during upgrades.
+  replicas: 1
+
+agent:
+  # Agent and node installer only on nodes labelled paguro.dev/enabled=true;
+  # pods migrate only between such nodes.
+  onlyLabelledNodes: true
+
+monitoring:
+  prometheusRule:
+    enabled: false
+  podMonitor:
+    enabled: false

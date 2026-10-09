@@ -1,0 +1,344 @@
+From 606196a5dec8c77909017e73baf6442c2ce4a7f8 Mon Sep 17 00:00:00 2001
+From: Paguro <paguro@example.invalid>
+Date: Tue, 6 Oct 2026 20:33:04 +0200
+Subject: [PATCH] uffd: index the lazy IOVs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+After iterative pre-dumps of a task whose memory was written all over,
+the final pagemap has hundreds of thousands of entries – 730,000 for a
+task of 8 GiB – and the lazy-pages daemon keeps one IOV per entry. Every
+page fault walked that list to find its IOV (find_iov), to put the
+completed request back (iov_list_insert) and to drop it (__drop_iovs);
+the task got some 50 pages a second and the background transfer, reset
+to 64 KiB by every fault, barely moved.
+
+Keep the IOVs on lpi->iovs also in an rbtree by address: lookups,
+re-insertion and the start of a drop become logarithmic. The tree is
+maintained where IOVs are split, moved to the requests or freed, and
+rebuilt after bulk changes (collect, fork, remap).
+
+Signed-off-by: Paguro <paguro@example.invalid>
+---
+ criu/uffd.c | 144 ++++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 123 insertions(+), 21 deletions(-)
+
+diff --git a/criu/uffd.c b/criu/uffd.c
+index 8e12dcd..6e400f6 100644
+--- a/criu/uffd.c
++++ b/criu/uffd.c
+@@ -40,6 +40,7 @@
+ #include "tls.h"
+ #include "fdstore.h"
+ #include "util.h"
++#include "rbtree.h"
+ #include "namespaces.h"
+ 
+ #undef LOG_PREFIX
+@@ -71,6 +72,8 @@ static mutex_t *lazy_sock_mutex;
+ 
+ struct lazy_iov {
+ 	struct list_head l;
++	struct rb_node node; /* in lazy_pages_info.iov_tree while on .iovs */
++	bool indexed;
+ 	unsigned long start;	 /* run-time start address, tracks remaps */
+ 	unsigned long end;	 /* run-time end address, tracks remaps */
+ 	unsigned long img_start; /* start address at the dump time */
+@@ -81,6 +84,7 @@ struct lazy_pages_info {
+ 	bool exited;
+ 
+ 	struct list_head iovs;
++	struct rb_root iov_tree; /* index of iovs by address, see iov_lookup() */
+ 	struct list_head reqs;
+ 
+ 	struct lazy_pages_info *parent;
+@@ -144,6 +148,69 @@ static void free_iovs(struct lazy_pages_info *lpi)
+ 		list_del(&p->l);
+ 		xfree(p);
+ 	}
++	lpi->iov_tree = RB_ROOT;
++}
++
++/*
++ * The IOVs still to transfer are kept in address order on lpi->iovs and,
++ * for lookups, in lpi->iov_tree. After a dump with pre-dumps of a task
++ * whose memory was written all over, the pagemap has hundreds of
++ * thousands of entries (one IOV each); finding the IOV of a page fault and
++ * re-inserting a completed request walked the list, and a task of 8 GiB
++ * got some 50 pages a second. The tree makes these lookups logarithmic.
++ * IOVs never overlap, so the order by start is also the order by end.
++ */
++static void iov_index(struct lazy_pages_info *lpi, struct lazy_iov *iov)
++{
++	struct rb_node **p = &lpi->iov_tree.rb_node, *parent = NULL;
++
++	while (*p) {
++		struct lazy_iov *cur = rb_entry(*p, struct lazy_iov, node);
++
++		parent = *p;
++		p = iov->start < cur->start ? &(*p)->rb_left : &(*p)->rb_right;
++	}
++	rb_link_node(&iov->node, parent, p);
++	rb_insert_color(&iov->node, &lpi->iov_tree);
++	iov->indexed = true;
++}
++
++static void iov_unindex(struct lazy_pages_info *lpi, struct lazy_iov *iov)
++{
++	if (!iov->indexed)
++		return;
++	rb_erase(&iov->node, &lpi->iov_tree);
++	iov->indexed = false;
++}
++
++/* Rebuild the index after bulk changes of lpi->iovs (collect, fork, remap). */
++static void reindex_iovs(struct lazy_pages_info *lpi)
++{
++	struct lazy_iov *iov;
++
++	lpi->iov_tree = RB_ROOT;
++	list_for_each_entry(iov, &lpi->iovs, l) {
++		iov->indexed = false;
++		iov_index(lpi, iov);
++	}
++}
++
++/* The first IOV on lpi->iovs that ends above addr, NULL if there is none. */
++static struct lazy_iov *iov_lookup(struct lazy_pages_info *lpi, unsigned long addr)
++{
++	struct rb_node *n = lpi->iov_tree.rb_node;
++	struct lazy_iov *found = NULL;
++
++	while (n) {
++		struct lazy_iov *cur = rb_entry(n, struct lazy_iov, node);
++
++		if (cur->end > addr) {
++			found = cur;
++			n = n->rb_left;
++		} else
++			n = n->rb_right;
++	}
++	return found;
+ }
+ 
+ static void lpi_fini(struct lazy_pages_info *lpi);
+@@ -410,16 +477,15 @@ static MmEntry *init_mm_entry(struct lazy_pages_info *lpi)
+ 
+ static struct lazy_iov *find_iov(struct lazy_pages_info *lpi, unsigned long addr)
+ {
+-	struct lazy_iov *iov;
++	struct lazy_iov *iov = iov_lookup(lpi, addr);
+ 
+-	list_for_each_entry(iov, &lpi->iovs, l)
+-		if (addr >= iov->start && addr < iov->end)
+-			return iov;
++	if (iov && addr >= iov->start)
++		return iov;
+ 
+ 	return NULL;
+ }
+ 
+-static int split_iov(struct lazy_iov *iov, unsigned long addr)
++static int split_iov(struct lazy_pages_info *lpi, struct lazy_iov *iov, unsigned long addr)
+ {
+ 	struct lazy_iov *new;
+ 
+@@ -432,10 +498,27 @@ static int split_iov(struct lazy_iov *iov, unsigned long addr)
+ 	new->end = iov->end;
+ 	iov->end = addr;
+ 	list_add(&new->l, &iov->l);
++	if (iov->indexed)
++		iov_index(lpi, new);
+ 
+ 	return 0;
+ }
+ 
++/*
++ * Put a request back among the IOVs, in address order. A request never
++ * overlaps the IOVs, so the first IOV that ends above its start follows it.
++ */
++static void iov_reinsert(struct lazy_pages_info *lpi, struct lazy_iov *req)
++{
++	struct lazy_iov *next = iov_lookup(lpi, req->start);
++
++	if (next)
++		list_move_tail(&req->l, &next->l);
++	else
++		list_move_tail(&req->l, &lpi->iovs);
++	iov_index(lpi, req);
++}
++
+ static void iov_list_insert(struct lazy_iov *new, struct list_head *dst)
+ {
+ 	struct lazy_iov *iov;
+@@ -500,6 +583,7 @@ static int copy_iovs(struct lazy_pages_info *src, struct lazy_pages_info *dst)
+ 	 * transferred again for the child process
+ 	 */
+ 	merge_iov_lists(&dst->reqs, &dst->iovs);
++	reindex_iovs(dst);
+ 
+ 	dst->buf_size = src->buf_size;
+ 	if (posix_memalign(&dst->buf, PAGE_SIZE, dst->buf_size))
+@@ -516,11 +600,20 @@ free_iovs:
+  * Purge range (addr, addr + len) from lazy_iovs. The range may
+  * cover several continuous IOVs.
+  */
+-static int __drop_iovs(struct list_head *iovs, unsigned long addr, int len)
++static int __drop_iovs(struct lazy_pages_info *lpi, struct list_head *iovs, unsigned long addr, int len)
+ {
+ 	struct lazy_iov *iov, *n;
+ 
+-	list_for_each_entry_safe(iov, n, iovs, l) {
++	/* On lpi->iovs nothing before the first IOV ending above addr is affected. */
++	if (iovs == &lpi->iovs) {
++		iov = iov_lookup(lpi, addr);
++		if (!iov)
++			return 0;
++	} else
++		iov = list_first_entry(iovs, struct lazy_iov, l);
++
++	for (n = list_entry(iov->l.next, struct lazy_iov, l); &iov->l != iovs;
++	     iov = n, n = list_entry(n->l.next, struct lazy_iov, l)) {
+ 		unsigned long start = iov->start;
+ 		unsigned long end = iov->end;
+ 
+@@ -547,7 +640,7 @@ static int __drop_iovs(struct list_head *iovs, unsigned long addr, int len)
+ 				iov->start += len;
+ 				iov->img_start += len;
+ 			} else {
+-				if (split_iov(iov, addr + len))
++				if (split_iov(lpi, iov, addr + len))
+ 					return -1;
+ 				iov->end = addr;
+ 			}
+@@ -561,6 +654,7 @@ static int __drop_iovs(struct list_head *iovs, unsigned long addr, int len)
+ 		 * and continue to the next one with the updated range
+ 		 */
+ 		if (addr == start) {
++			iov_unindex(lpi, iov);
+ 			list_del(&iov->l);
+ 			xfree(iov);
+ 		} else {
+@@ -576,33 +670,35 @@ static int __drop_iovs(struct list_head *iovs, unsigned long addr, int len)
+ 
+ static int drop_iovs(struct lazy_pages_info *lpi, unsigned long addr, int len)
+ {
+-	if (__drop_iovs(&lpi->iovs, addr, len))
++	if (__drop_iovs(lpi, &lpi->iovs, addr, len))
+ 		return -1;
+ 
+-	if (__drop_iovs(&lpi->reqs, addr, len))
++	if (__drop_iovs(lpi, &lpi->reqs, addr, len))
+ 		return -1;
+ 
+ 	return 0;
+ }
+ 
+-static struct lazy_iov *extract_range(struct lazy_iov *iov, unsigned long start, unsigned long end)
++static struct lazy_iov *extract_range(struct lazy_pages_info *lpi, struct lazy_iov *iov, unsigned long start,
++				      unsigned long end)
+ {
+ 	/* move the IOV tail into a new IOV */
+ 	if (end < iov->end)
+-		if (split_iov(iov, end))
++		if (split_iov(lpi, iov, end))
+ 			return NULL;
+ 
+ 	if (start == iov->start)
+ 		return iov;
+ 
+ 	/* after splitting the IOV head we'll need the ->next IOV */
+-	if (split_iov(iov, start))
++	if (split_iov(lpi, iov, start))
+ 		return NULL;
+ 
+ 	return list_entry(iov->l.next, struct lazy_iov, l);
+ }
+ 
+-static int __remap_iovs(struct list_head *iovs, unsigned long from, unsigned long to, unsigned long len)
++static int __remap_iovs(struct lazy_pages_info *lpi, struct list_head *iovs, unsigned long from, unsigned long to,
++			unsigned long len)
+ {
+ 	LIST_HEAD(remaps);
+ 
+@@ -622,14 +718,14 @@ static int __remap_iovs(struct list_head *iovs, unsigned long from, unsigned lon
+ 		}
+ 
+ 		if (from > iov->start) {
+-			if (split_iov(iov, from))
++			if (split_iov(lpi, iov, from))
+ 				return -1;
+ 			list_safe_reset_next(iov, n, l);
+ 			continue;
+ 		}
+ 
+ 		if (from + len < iov->end) {
+-			if (split_iov(iov, from + len))
++			if (split_iov(lpi, iov, from + len))
+ 				return -1;
+ 			list_safe_reset_next(iov, n, l);
+ 		}
+@@ -649,12 +745,14 @@ static int __remap_iovs(struct list_head *iovs, unsigned long from, unsigned lon
+ 
+ static int remap_iovs(struct lazy_pages_info *lpi, unsigned long from, unsigned long to, unsigned long len)
+ {
+-	if (__remap_iovs(&lpi->iovs, from, to, len))
++	if (__remap_iovs(lpi, &lpi->iovs, from, to, len))
+ 		return -1;
+ 
+-	if (__remap_iovs(&lpi->reqs, from, to, len))
++	if (__remap_iovs(lpi, &lpi->reqs, from, to, len))
+ 		return -1;
+ 
++	/* the remapped IOVs changed their addresses */
++	reindex_iovs(lpi);
+ 	return 0;
+ }
+ 
+@@ -712,6 +810,8 @@ static int collect_iovs(struct lazy_pages_info *lpi)
+ 		}
+ 	}
+ 
++	reindex_iovs(lpi);
++
+ 	lpi->buf_size = max_iov_len;
+ 	if (posix_memalign(&lpi->buf, PAGE_SIZE, lpi->buf_size))
+ 		goto free_iovs;
+@@ -915,7 +1015,7 @@ static int uffd_io_complete(struct page_read *pr, unsigned long img_addr, unsign
+ 	 * actual data we've received we re-insert the request to IOVs
+ 	 * list and let drop_iovs do the range math, free memory etc.
+ 	 */
+-	iov_list_insert(req, &lpi->iovs);
++	iov_reinsert(lpi, req);
+ 	return drop_iovs(lpi, addr, nr * PAGE_SIZE);
+ }
+ 
+@@ -1012,9 +1112,10 @@ static int xfer_pages(struct lazy_pages_info *lpi)
+ 
+ 	len = min(iov->end - iov->start, lpi->xfer_len);
+ 
+-	iov = extract_range(iov, iov->start, iov->start + len);
++	iov = extract_range(lpi, iov, iov->start, iov->start + len);
+ 	if (!iov)
+ 		return -1;
++	iov_unindex(lpi, iov);
+ 	list_move(&iov->l, &lpi->reqs);
+ 
+ 	nr_pages = (iov->end - iov->start) / PAGE_SIZE;
+@@ -1166,10 +1267,11 @@ static int handle_page_fault(struct lazy_pages_info *lpi, struct uffd_msg *msg)
+ 	if (!iov)
+ 		return uffd_zero(lpi, address, 1);
+ 
+-	iov = extract_range(iov, address, address + PAGE_SIZE);
++	iov = extract_range(lpi, iov, address, address + PAGE_SIZE);
+ 	if (!iov)
+ 		return -1;
+ 
++	iov_unindex(lpi, iov);
+ 	list_move(&iov->l, &lpi->reqs);
+ 
+ 	update_xfer_len(lpi, true);
+-- 
+2.47.3
+

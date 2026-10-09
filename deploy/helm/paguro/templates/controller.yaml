@@ -1,0 +1,362 @@
+{{- /* paguro-controller: state machine + admission webhook in one process. */ -}}
+{{- $ns := .Release.Namespace }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: paguro-controller
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: paguro-controller
+    {{- include "paguro.labels" . | nindent 4 }}
+---
+# Least-privilege RBAC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: paguro-controller
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+rules:
+  # Migrations: created for evictions (webhook), finalizer and source pod
+  # annotation via patch, status via patch.
+  - apiGroups: ["paguro.dev"]
+    resources: ["migrations"]
+    verbs: ["get", "list", "watch", "create", "patch", "update"]
+  - apiGroups: ["paguro.dev"]
+    resources: ["migrations/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["paguro.dev"]
+    resources: ["migrations/finalizers"]
+    verbs: ["update"]
+  # Delete the source pod, create bare-pod replacements, annotate pods.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  # Release a replacement held back by the commit gate and bind it to the
+  # target node (internal/gate).
+  - apiGroups: [""]
+    resources: ["pods/binding"]
+    verbs: ["create"]
+  # Commit gate: the claim of each replacement, allocated and reserved
+  # by Paguro (internal/controller/gate.go).
+  - apiGroups: ["resource.k8s.io"]
+    resources: ["resourceclaims"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["resource.k8s.io"]
+    resources: ["resourceclaims/status"]
+    verbs: ["get", "update", "patch"]
+  # Since Kubernetes 1.37 setting status.allocation/reservedFor needs this.
+  - apiGroups: ["resource.k8s.io"]
+    resources: ["resourceclaims/binding"]
+    verbs: ["update"]
+  - apiGroups: [""]
+    resources: ["nodes", "persistentvolumeclaims", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["get", "list", "watch"]
+  # Display only: resolve ReplicaSet -> Deployment.
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get"]
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # CNI detection (ciliumpodippools.cilium.io, ippools.crd.projectcalico.org).
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list"]
+  # Sticky IPs with Cilium: one /32 pool per migratable pod.
+  - apiGroups: ["cilium.io"]
+    resources: ["ciliumpodippools"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # Backend keeper (internal/controller/keeper.go): a selector-less Service
+  # holding a migrated pod's old address while connections still use it.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["list", "watch", "create", "delete"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # Phantom mode: which prefixes belong to the cluster (read only).
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["servicecidrs"]
+    verbs: ["list"]
+  # Phantom mode reads the nodes' pod CIDRs; pool rotation nudges the target's
+  # CiliumNode so the operator reconciles a new pool generation at once.
+  - apiGroups: ["cilium.io"]
+    resources: ["ciliumnodes"]
+    verbs: ["get", "list", "patch"]
+  # Rollback after an early hand-over: announce the source's endpoint again
+  # (internal/controller/reannounce.go).
+  - apiGroups: ["cilium.io"]
+    resources: ["ciliumendpoints"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["crd.projectcalico.org"]
+    resources: ["ippools"]
+    verbs: ["list"]
+  # Signer paguro.dev/agent: the agents' node certificates for the
+  # transfer (internal/agentca) – approve and sign for this signer only.
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["certificatesigningrequests"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["certificatesigningrequests/approval", "certificatesigningrequests/status"]
+    verbs: ["update"]
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["signers"]
+    resourceNames: ["paguro.dev/agent"]
+    verbs: ["approve", "sign"]
+  {{- if include "paguro.agones" . }}
+  # Agones: hold a GameServer while its pod is replaced, then point it at
+  # the target node (internal/controller/agones.go).
+  - apiGroups: ["agones.dev"]
+    resources: ["gameservers"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies"]
+    resourceNames: ["paguro-agones-guard"]
+    verbs: ["get"]
+  {{- end }}
+  # Maintain the caBundle of our own webhook – only this one object.
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations"]
+    resourceNames: ["paguro"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: paguro-controller
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: paguro-controller
+subjects:
+  - kind: ServiceAccount
+    name: paguro-controller
+    namespace: {{ $ns }}
+---
+# Namespace-local: webhook certificate and leader election.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: paguro-controller
+  namespace: {{ $ns }}
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["paguro-webhook-tls", "paguro-agent-ca"]
+    verbs: ["get", "update"]
+  # create cannot be restricted by resourceNames.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  # The agents' CA certificate (the agents mount it).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["paguro-agent-ca"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: paguro-controller
+  namespace: {{ $ns }}
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: paguro-controller
+subjects:
+  - kind: ServiceAccount
+    name: paguro-controller
+    namespace: {{ $ns }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paguro-controller
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: paguro-controller
+    {{- include "paguro.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  # Every replica serves the webhook (the interception state lives in the
+  # Migration objects); a new replica becomes ready before an old one goes.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: paguro-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: paguro-controller
+        app.kubernetes.io/part-of: paguro
+      {{- /* The scrape annotation's port follows ports.metrics unless set. */}}
+      {{- $ann := deepCopy (.Values.controller.podAnnotations | default dict) }}
+      {{- if and (hasKey $ann "prometheus.io/scrape") (not (hasKey $ann "prometheus.io/port")) }}
+      {{- $_ := set $ann "prometheus.io/port" (toString .Values.controller.ports.metrics) }}
+      {{- end }}
+      {{- with $ann }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: paguro-controller
+
+      {{- include "paguro.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.controller.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.controller.affinity }}
+      affinity:
+        {{- toYaml .Values.controller.affinity | nindent 8 }}
+      {{- else if gt (int .Values.controller.replicas) 1 }}
+      # Replicas on different nodes: a node drain must not take the webhook.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: paguro-controller
+      {{- end }}
+      containers:
+        - name: controller
+          image: {{ include "paguro.image" (dict "root" $ "img" .Values.controller.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          # The controller keeps serving 5 s after SIGTERM while its
+          # endpoint leaves the Service (--shutdown-delay).
+          args:
+            - --leader-elect={{ .Values.controller.leaderElect }}
+            - --sticky-cidr={{ .Values.cni.stickyCIDR }}
+            - --webhook-port={{ .Values.controller.ports.webhook }}
+            - --metrics-bind-address=:{{ .Values.controller.ports.metrics }}
+            - --health-probe-bind-address=:{{ .Values.controller.ports.probes }}
+            - --service-name=paguro-controller
+            - --webhook-config=paguro
+            - --webhook-secret=paguro-webhook-tls
+            - --agent-ca={{ if dig "transferTLS" "enabled" true .Values.agent }}paguro-agent-ca{{ end }}
+            - --zap-log-level={{ .Values.controller.logLevel }}
+            - --phantom-auto={{ dig "enabled" true (.Values.phantom | default dict) }}
+            - --commit-gate={{ dig "enabled" true (.Values.commitGate | default dict) }}
+            - --early-handover={{ dig "earlyHandOver" true (.Values.commitGate | default dict) }}
+            - --cpu-baseline={{ .Values.cpuBaseline | default "auto" }}
+            - --migrations-per-node={{ .Values.controller.migrationsPerNode }}
+            - --eviction-target-wait={{ .Values.controller.evictionTargetWait }}
+            - --webhook-exclude-namespaces={{ join "," (uniq (append .Values.webhook.excludeNamespaces .Release.Namespace)) }}
+            {{- with dig "clusterCIDRs" list (.Values.phantom | default dict) }}
+            - --phantom-cluster-cidrs={{ join "," . }}
+            {{- end }}
+            {{- range .Values.controller.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Hint only; the controller auto-detects the CNI by its CRDs.
+            - name: PAGURO_CNI_ADAPTER
+              value: {{ .Values.cni.adapter | quote }}
+          ports:
+            - name: webhook
+              containerPort: {{ .Values.controller.ports.webhook }}
+            - name: metrics
+              containerPort: {{ .Values.controller.ports.metrics }}
+            - name: probes
+              containerPort: {{ .Values.controller.ports.probes }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: certs
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+      volumes:
+        - name: certs
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paguro-controller
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: paguro-controller
+    {{- include "paguro.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: paguro-controller
+  ports:
+    - name: webhook
+      port: 9443
+      targetPort: webhook
+    - name: metrics
+      port: {{ .Values.controller.ports.metrics }}
+      targetPort: metrics
+{{- if gt (int .Values.controller.replicas) 1 }}
+---
+# At least one replica serves the webhook during voluntary disruptions
+# (node drains).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: paguro-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: paguro-controller
+    {{- include "paguro.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: paguro-controller
+{{- end }}

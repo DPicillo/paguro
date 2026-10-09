@@ -1,0 +1,62 @@
+# Amazon EKS with Amazon Linux 2023 nodes (managed node groups or
+# Karpenter), the AWS VPC CNI and Karpenter.
+#
+# The VPC CNI cannot move an address to another instance: a migrated pod gets
+# a new IP, and Phantom mode keeps its connections inside the cluster. Serve
+# clients outside the cluster through a Service with instance targets – NLB or
+# ALB IP targets see the new address only after re-registration.
+#
+# Karpenter needs nothing on Paguro's side: its evictions (drift,
+# consolidation, expiry, spot interruptions) become migrations. Give the
+# NodePool Paguro's startup taint, so that a new node counts as initialized
+# only once the agent runs there:
+#
+#   apiVersion: karpenter.sh/v1
+#   kind: NodePool
+#   spec:
+#     template:
+#       spec:
+#         startupTaints:
+#           - {key: paguro.dev/agent-not-ready, effect: NoSchedule}
+#
+# For spot, give Karpenter its interruption queue (settings.interruptionQueue)
+# and allow more than one instance type or capacity type in the NodePool.
+# Bottlerocket, EKS Auto Mode and Fargate nodes are not supported.
+#
+#   helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.0 \
+#     -n paguro-system --create-namespace -f eks-karpenter.yaml
+
+# Images mirrored to ECR instead of ghcr.io:
+# global:
+#   imageRegistry: <account>.dkr.ecr.<region>.amazonaws.com/paguro
+
+cni:
+  # No address can move: new IP, Phantom mode (also leaves out the Cilium
+  # socket mount that "auto" renders).
+  adapter: generic
+
+controller:
+  # How long a migration that an eviction started waits for the node
+  # Karpenter launches; on EC2 it is ready after about 50 s.
+  evictionTargetWait: 2m
+
+# CRIU and the compression run in the agent's cgroup, so on busy nodes the
+# agent's CPU request decides how fast the pre-copy runs; raise it for busy
+# nodes and large pods. EBS volumes are RWO and stay in their availability
+# zone; with io2 Multi-Attach volumes the target can attach them during
+# pre-copy.
+# agent:
+#   resources:
+#     requests: {cpu: 500m, memory: 64Mi}
+#     limits: {}
+#   preAttach:
+#     enabled: true
+
+# kube-prometheus-stack selects rules and PodMonitors by its release label.
+monitoring:
+  prometheusRule:
+    labels:
+      release: kube-prometheus-stack
+  podMonitor:
+    labels:
+      release: kube-prometheus-stack

@@ -1,0 +1,60 @@
+Paguro {{ .Values.global.imageTag | default .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
+
+1. Wait until every node is prepared and the agents are ready:
+
+     kubectl -n {{ .Release.Namespace }} rollout status ds/paguro-agent
+     kubectl -n {{ .Release.Namespace }} rollout status deploy/paguro-controller
+{{- if .Values.nodeInstaller.enabled }}
+
+   A pod stuck in Init:Error means the node does not meet the requirements.
+   The node installer prints a full report:
+
+     kubectl -n {{ .Release.Namespace }} logs <paguro-agent-pod> -c node-installer
+{{- end }}
+{{- if .Values.agent.onlyLabelledNodes }}
+
+   The agent only runs on labelled nodes:
+
+     kubectl label node <node> paguro.dev/enabled=true
+{{- end }}
+
+2. Install the kubectl plugin – archives for Linux, macOS and Windows:
+   https://github.com/DPicillo/paguro/releases/tag/{{ .Chart.AppVersion }}
+   (or from source: make kubectl-plugin), then:
+
+     kubectl paguro version
+     kubectl paguro nodes
+
+3. Mark a workload as migratable (label on the POD template, set at creation):
+
+     spec:
+       template:
+         metadata:
+           labels:
+             paguro.dev/migratable: "true"
+
+   The label takes effect when the pod is created; labelling a running pod
+   does nothing until it is restarted.
+
+4. Migrate a pod or drain a node:
+
+     kubectl paguro migrate <pod> -n <ns> --to <node> --wait
+     kubectl paguro drain <node>
+     kubectl paguro list
+
+How a migration treats the pod's IP (annotation paguro.dev/network on the pod
+template, or kubectl paguro migrate --network):
+  Auto      keep the IP where the CNI can (Calico, Cilium sticky IPs),
+            otherwise Phantom mode where every node supports it
+  Preserve  same IP, TCP connections kept
+  Phantom   new IP, in-cluster connections kept (eBPF translation){{ if not (dig "enabled" true (.Values.phantom | default dict)) }} – disabled (phantom.enabled=false){{ end }}
+  Generic   new IP, TCP connections closed
+RAM, files and PVCs move in every mode.
+
+CNI adapter: {{ .Values.cni.adapter }}{{ if eq .Values.cni.adapter "auto" }} (detected by the controller){{ end }}
+{{- if eq .Values.cni.adapter "auto" "cilium" }}
+Sticky IP range (used only with Cilium multi-pool IPAM): {{ .Values.cni.stickyCIDR }}
+{{- end }}
+
+Docs: https://github.com/DPicillo/paguro/blob/main/docs/INSTALL.md
+(requirements, EKS, upgrades, uninstall, troubleshooting).

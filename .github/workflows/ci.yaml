@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# GitHub Actions (once the repository is hosted there); locally the same
+# checks run with `make ci`, before every push via hack/install-hooks.sh.
+name: ci
+on:
+  # Tags run the same checks in the release workflow.
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.22.0
+      - name: Tools
+        run: |
+          make tools
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # Formatting, SPDX headers, vet, unit tests, generated files and
+      # third-party licenses up to date, Helm lint.
+      - run: make ci
+
+  images:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the images
+        run: |
+          docker build -f build/agent.Dockerfile -t paguro-agent:ci .
+          docker build -f build/controller.Dockerfile --build-arg VERSION=ci -t paguro-controller:ci .
+          docker build -f build/node-installer.Dockerfile -t paguro-node-installer:ci .
+          docker build -f build/node-installer.Dockerfile --target sources -t paguro-node-installer-sources:ci .
+      - name: Licenses in every image
+        run: |
+          for i in paguro-agent paguro-controller paguro-node-installer; do
+            docker create --name lic $i:ci x
+            docker export lic | tar -t | grep -q '^licenses/LICENSE$'
+            docker rm lic >/dev/null
+          done
+
+  # Developer Certificate of Origin: every commit of a pull request is
+  # signed off by its author (CONTRIBUTING.md).
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Signed-off-by
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: hack/check-dco.sh "$BASE" "$HEAD"
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # Known vulnerabilities the code reaches, minus reviewed exceptions
+      # (hack/vulncheck-accepted.txt).
+      - run: make vulncheck

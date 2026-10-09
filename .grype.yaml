@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Reviewed findings of `make image-scan` (grype). Each entry needs a reason
+# and is re-checked on every release.
+ignore:
+  # crictl v1.37.0 (latest release) requires golang.org/x/mod v0.38.0 but
+  # never imports the affected packages: `govulncheck -mode binary` on the
+  # shipped crictl reports 0 reachable vulnerabilities. Drop with the next
+  # crictl release.
+  - vulnerability: GO-2026-6179
+    package: {name: golang.org/x/mod, location: /opt/paguro/bin/crictl}
+  - vulnerability: GO-2026-6180
+    package: {name: golang.org/x/mod, location: /opt/paguro/bin/crictl}

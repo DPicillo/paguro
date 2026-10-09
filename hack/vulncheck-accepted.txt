@@ -1,0 +1,3 @@
+# Known vulnerabilities reached by Paguro's code that were reviewed and
+# accepted, one per line: <ID> <reason>. hack/vulncheck.sh reports an entry
+# that is no longer found so that it can be removed.

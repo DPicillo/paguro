@@ -1,0 +1,26 @@
+{{- /* RuntimeClass for restored pods (handler "paguro" -> paguro-runc).
+Skipped if a RuntimeClass of that name already exists and was not created by
+this release (e.g. by configuration management). */ -}}
+{{- if .Values.runtimeClass.create }}
+{{- $existing := lookup "node.k8s.io/v1" "RuntimeClass" "" .Values.runtimeClass.name }}
+{{- if eq (include "paguro.ownedOrAbsent" (dict "root" $ "obj" $existing)) "true" }}
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: {{ .Values.runtimeClass.name }}
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+handler: {{ .Values.runtimeClass.handler }}
+{{- if or .Values.agent.onlyLabelledNodes .Values.agent.nodeSelector }}
+# Restored pods can only start where the handler is installed.
+scheduling:
+  nodeSelector:
+    {{- if .Values.agent.onlyLabelledNodes }}
+    paguro.dev/enabled: "true"
+    {{- end }}
+    {{- with .Values.agent.nodeSelector }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

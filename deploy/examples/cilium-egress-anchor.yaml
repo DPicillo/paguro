@@ -1,0 +1,46 @@
+# Egress anchor for migratable pods (Cilium Egress Gateway).
+#
+# Why: a pod's outbound connections to destinations OUTSIDE the cluster are
+# masqueraded to its node's IP. After a migration they would leave from a
+# different node with a different source IP, and the external peer drops them
+# (measured: an external echo server saw the old node's address, and the
+# connection ended at the migration).
+#
+# With this policy all outbound traffic of migratable pods to external
+# destinations leaves through ONE gateway node and is SNATed there. The pod IP
+# is preserved by Paguro, so the gateway's NAT entry stays valid wherever the
+# pod runs, and the external peer keeps seeing the same source IP and port.
+#
+# Required Cilium settings: egressGateway.enabled=true and
+# egressGateway.reconciliationTriggerInterval=50ms (default 1s). The policy
+# entry for the restored pod is recreated when its new endpoint appears; with
+# 1 s the first packets after the restore left via the node's own IP and the
+# external peer answered with RST (measured, 2 of 5 migrations). With 50 ms the
+# entry exists before the restore finishes: 8/8 migrations, 0 RST.
+#
+# Trade-off: the gateway node is on the path of that traffic (one extra hop
+# inside the cluster) and is a single point of failure in Cilium OSS – pick a
+# stable node, or use a cloud NAT gateway (e.g. AWS NAT Gateway with VPC IPs)
+# where the SNAT happens outside the cluster anyway.
+apiVersion: cilium.io/v2
+kind: CiliumEgressGatewayPolicy
+metadata:
+  name: paguro-egress-anchor
+spec:
+  selectors:
+    - podSelector:
+        matchLabels:
+          paguro.dev/migratable: "true"
+  destinationCIDRs:
+    - 0.0.0.0/0
+  excludedCIDRs:
+    # Adjust to your cluster: everything inside it stays as it is.
+    - 10.42.0.0/24     # node network
+    - 10.244.0.0/16    # pod CIDR (default pool)
+    - 10.250.0.0/16    # Paguro's sticky IP pool
+    - 10.96.0.0/12     # services
+  egressGateway:
+    nodeSelector:
+      matchLabels:
+        paguro.dev/role: utility
+    interface: ens3

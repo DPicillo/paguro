@@ -1,0 +1,21 @@
+name: Feature request
+description: A workload, CNI, platform or behaviour Paguro should support.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What do you want to move, on which platform, and what stops you today? Measurements help.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would solve it
+      description: Optional – an idea of the behaviour, or of how it could work.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Kubernetes version and distribution or cloud, CNI, node OS – where you would use it.

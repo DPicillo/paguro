@@ -1,0 +1,787 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: migrations.paguro.dev
+spec:
+  group: paguro.dev
+  names:
+    categories:
+    - paguro
+    kind: Migration
+    listKind: MigrationList
+    plural: migrations
+    shortNames:
+    - pmig
+    - mig
+    singular: migration
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.podName
+      name: Pod
+      type: string
+    - jsonPath: .status.sourceNode
+      name: From
+      type: string
+    - jsonPath: .status.targetNode
+      name: To
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.ipPreserved
+      name: IP-kept
+      type: boolean
+    - jsonPath: .status.timings.freezeMs
+      name: Freeze-ms
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Migration moves a running pod, including its memory state, to another
+          node.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MigrationSpec describes what should be migrated where.
+            properties:
+              cpuPolicy:
+                default: Strict
+                description: CPUPolicy governs how differing CPU features are handled.
+                enum:
+                - Strict
+                - Ignore
+                type: string
+              network:
+                default: Auto
+                description: NetworkMode determines whether the pod IP and TCP connections
+                  are preserved.
+                enum:
+                - Auto
+                - Preserve
+                - Phantom
+                - Generic
+                type: string
+              podName:
+                description: Name of the pod in this migration's namespace.
+                minLength: 1
+                type: string
+              preCopy:
+                default: {}
+                properties:
+                  autoConverge:
+                    default: true
+                    description: |-
+                      AutoConverge gradually throttles the app's CPU (cgroup cpu.max) when it
+                      dirties memory faster than the network can copy it.
+                      Same principle as QEMU auto-converge.
+                    type: boolean
+                  dirtyPageThreshold:
+                    default: 2048
+                    description: Freeze as soon as a round wrote fewer than this many
+                      4 KiB pages.
+                    format: int64
+                    type: integer
+                  freezeBudgetMs:
+                    default: 500
+                    description: |-
+                      Target duration of the final dump including transfer (ms). The agent
+                      only freezes once (dirty pages / measured bandwidth) is below this –
+                      or MaxRounds/MaxSeconds is reached.
+                    format: int32
+                    type: integer
+                  maxRounds:
+                    default: 8
+                    description: Maximum number of pre-copy rounds before the freeze.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maxSeconds:
+                    description: |-
+                      Freeze after at most this many seconds of pre-copy. 0 (default):
+                      four times the first round, at least 120 s – the first round copies
+                      all memory (8 GiB over 1 GbE: 90 s), so a fixed limit cut large pods
+                      short.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
+              strategy:
+                default: PreCopy
+                description: Strategy determines how memory is transferred.
+                enum:
+                - PreCopy
+                - StopAndCopy
+                type: string
+              targetNode:
+                description: Target node. Empty = the controller picks a compatible
+                  node.
+                type: string
+              timeoutSeconds:
+                default: 600
+                description: Overall time limit; after that rollback (if still possible)
+                  or Failed.
+                format: int32
+                type: integer
+            required:
+            - podName
+            type: object
+          status:
+            description: |-
+              MigrationStatus: phase/target/timings are written by the controller,
+              source/target by the respective agents.
+            properties:
+              completedAt:
+                format: date-time
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              containers:
+                items:
+                  description: ContainerStatus is written by the source agent.
+                  properties:
+                    name:
+                      type: string
+                    rootfsDiffBytes:
+                      description: Size of the rootfs delta (writable layer).
+                      format: int64
+                      type: integer
+                    rounds:
+                      items:
+                        description: RoundStat is the result of a pre-copy round or
+                          of the final dump.
+                        properties:
+                          dumpMs:
+                            format: int64
+                            type: integer
+                          final:
+                            description: Final is true for the dump during the freeze.
+                            type: boolean
+                          pages:
+                            description: Memory pages (4 KiB) written in this round.
+                            format: int64
+                            type: integer
+                          round:
+                            format: int32
+                            type: integer
+                          sendMs:
+                            format: int64
+                            type: integer
+                          throttlePct:
+                            description: CPU throttle during this round in percent
+                              (0 = none).
+                            format: int32
+                            type: integer
+                          wireBytes:
+                            description: Bytes transferred in this round (after compression).
+                            format: int64
+                            type: integer
+                        required:
+                        - dumpMs
+                        - pages
+                        - round
+                        - sendMs
+                        - wireBytes
+                        type: object
+                      type: array
+                    rssBytes:
+                      description: Resident set size at the time the migration started.
+                      format: int64
+                      type: integer
+                    sourceContainerID:
+                      type: string
+                    tcpEstablished:
+                      description: TCP connections in the final dump.
+                      format: int32
+                      type: integer
+                  required:
+                  - name
+                  type: object
+                type: array
+              cutover:
+                description: |-
+                  Cutover state maintained by the controller; lets a restarted
+                  controller resume at the same point.
+                properties:
+                  endpointBridge:
+                    description: |-
+                      Endpoint bridge (controller): EndpointSlices that keep the serving
+                      address ready in the pod's Services across the hand-over, and when
+                      they were created.
+                    items:
+                      type: string
+                    type: array
+                  endpointBridgeAt:
+                    format: date-time
+                    type: string
+                  interceptArmedAt:
+                    description: |-
+                      Interception of the replacement pod by the admission webhook. The
+                      controller arms it (InterceptArmedAt); the first webhook replica that
+                      admits a new pod of the owner claims it (InterceptedAt, InterceptedPod)
+                      with the object's resourceVersion as precondition – exactly one pod
+                      becomes the restore target, whichever replica sees it.
+                    format: date-time
+                    type: string
+                  interceptedAt:
+                    format: date-time
+                    type: string
+                  interceptedPod:
+                    description: Name (or generateName) of the intercepted pod.
+                    type: string
+                  mode:
+                    description: |-
+                      Mode: "early" – the replacement pod is created during pre-copy already
+                      (Deployment pods: source detached from the ReplicaSet via
+                      pod-template-hash; bare pods: created by the controller) and waits warm
+                      for the data; "on-delete" – the owner creates the replacement only after
+                      the source is deleted (StatefulSet, Job, other owners); "same-name" –
+                      the owner never creates a second pod (Agones GameServer), the
+                      controller creates it under the source's name once the source is gone.
+                    enum:
+                    - early
+                    - on-delete
+                    - same-name
+                    type: string
+                  originalPodTemplateHash:
+                    description: |-
+                      Original value of the source's pod-template-hash label (early with
+                      ReplicaSet); restored on rollback.
+                    type: string
+                  replacementOwnerUID:
+                    description: |-
+                      UID of the direct controller (ReplicaSet, StatefulSet, Job ...) of the
+                      source pod. Its next new pod is turned into the restore target by the
+                      webhook. Empty for bare pods.
+                    type: string
+                  replacementRequestedAt:
+                    description: Time at which the controller requested the early
+                      replacement pod.
+                    format: date-time
+                    type: string
+                  sourceDeletedAt:
+                    description: Time at which the controller issued the deletion
+                      of the source pod.
+                    format: date-time
+                    type: string
+                  targetPodCreatedAt:
+                    description: Time at which the replacement pod object first existed.
+                    format: date-time
+                    type: string
+                type: object
+              ipPreserved:
+                type: boolean
+              message:
+                type: string
+              network:
+                description: Adapter-specific network state, written by the controller.
+                properties:
+                  cni:
+                    description: CNI active on the source node (from its paguro.dev/cni
+                      annotation).
+                    type: string
+                  commitGate:
+                    description: |-
+                      CommitGate: the replacement waits at the commit gate on the target
+                      node (a DRA claim, see internal/agent/dragate.go) and gets its sandbox
+                      the moment the migration is committed. Decided at preflight: kept IP,
+                      the target's agent runs the gate, no RWO volume (kubelet could not
+                      reach the gate before the source's detach).
+                    type: boolean
+                  earlyHandOver:
+                    description: |-
+                      EarlyHandOver: the replacement leaves the commit gate as soon as the
+                      source is paused, not at the commit – its sandbox (CNI, pause
+                      container) is created while the final dump runs. Only where the
+                      replacement can claim the address while the source still holds it
+                      (Cilium: the prepared TargetPool) and the address can be given back
+                      after a rollback (ReannouncedAt).
+                    type: boolean
+                  handOverAfterSourceStop:
+                    description: |-
+                      HandOverAfterSourceStop: the replacement leaves the commit gate when
+                      the source agent has torn down the source's sandbox (the address is
+                      free then), not at the commit. Calico: its IPAM hands the address to
+                      the replacement only after the source's CNI DEL; released at the
+                      commit, kubelet's first sandbox attempt failed and it retried only
+                      once a second.
+                    type: boolean
+                  phantomClusterCIDRs:
+                    description: |-
+                      Phantom mode: prefixes that belong to the cluster (pod and service
+                      ranges, node addresses). A connection to anything else cannot be
+                      translated on the peer's side.
+                    items:
+                      type: string
+                    type: array
+                  poolPreparedAt:
+                    description: When the controller created TargetPool during pre-copy.
+                    format: date-time
+                    type: string
+                  poolRotatedAt:
+                    description: When the controller deleted SourcePool (and made
+                      sure TargetPool exists).
+                    format: date-time
+                    type: string
+                  reannouncedAt:
+                    description: |-
+                      After a rollback with EarlyHandOver: when the controller announced
+                      the source's endpoint to the cluster again (the replacement's endpoint
+                      had taken over the address).
+                    format: date-time
+                    type: string
+                  sourcePool:
+                    description: |-
+                      Cilium: sticky CiliumPodIPPool of the source pod (annotation
+                      ipam.cilium.io/ip-pool). Deleted at cutover.
+                    type: string
+                  targetPool:
+                    description: |-
+                      Cilium: fresh pool generation for the replacement pod, same /32 as the
+                      source. Created during pre-copy (PoolPreparedAt) so that the operator
+                      can hand the /32 to the target node before the freeze – the source's
+                      endpoint keeps the address until then (an endpoint always takes
+                      precedence over a node's CIDR) – or, failing that, at cutover.
+                    type: string
+                type: object
+              networkAdapter:
+                description: 'Effective network choice: cilium | calico | phantom
+                  | generic'
+                type: string
+              ownerKind:
+                description: Owner of the source pod (ReplicaSet, StatefulSet ...);
+                  empty for bare pods.
+                type: string
+              ownerName:
+                type: string
+              phantomNodes:
+                additionalProperties:
+                  format: date-time
+                  type: string
+                description: |-
+                  Phantom mode: when each other node had programmed its side of the
+                  migrated connections (node name -> time). Each agent writes only its
+                  own key.
+                type: object
+              phantomUnroutable:
+                additionalProperties:
+                  format: date-time
+                  type: string
+                description: |-
+                  Phantom mode: old addresses of migrated connections that a node found
+                  no longer routed into the cluster – their pod subnet's route is gone,
+                  e.g. the old node was deleted (address -> time). The controller
+                  drops them from the backend keeper: a stateful load balancer then
+                  resets such connections at once instead of sending them out of the
+                  cluster, where they would hang.
+                type: object
+              phase:
+                description: |-
+                  Phase of the migration. Order on success:
+                  Pending → Preflight → PreCopy → Frozen → CuttingOver → Restoring → Succeeded
+                  Error path before the source is deleted: … → Aborting → RolledBack
+                enum:
+                - Pending
+                - Preflight
+                - PreCopy
+                - Frozen
+                - CuttingOver
+                - Restoring
+                - Succeeded
+                - Failed
+                - Aborting
+                - RolledBack
+                type: string
+              phaseChangedAt:
+                description: |-
+                  Time of the controller's last phase change
+                  (basis for phase timeouts and phase metrics).
+                format: date-time
+                type: string
+              releasedAt:
+                description: |-
+                  When the ended migration stopped touching the source pod and its
+                  owner (warm target removed, pod handed back to its ReplicaSet,
+                  address re-announced, source deleted after a commit, GameServer
+                  released). A later migration of the same pod waits for it.
+                format: date-time
+                type: string
+              source:
+                description: SourceStatus is written exclusively by the agent on the
+                  source node.
+                properties:
+                  accepted:
+                    description: The agent has accepted the migration.
+                    type: boolean
+                  error:
+                    type: string
+                  frozenAt:
+                    description: 'Time of the freeze: the application was paused on
+                      the source.'
+                    format: date-time
+                    type: string
+                  handOverAt:
+                    description: |-
+                      When the source told the target it is paused (EarlyHandOver): from
+                      then on the replacement may take the address.
+                    format: date-time
+                    type: string
+                  message:
+                    type: string
+                  phantom:
+                    description: |-
+                      Phantom mode: the pod's connections, harvested during the freeze and
+                      published at the commit (never earlier: before the commit the source
+                      may still be thawed and keep using its connections).
+                    properties:
+                      flows:
+                        items:
+                          description: PhantomFlow is one connection of the migrated
+                            pod in the pod's own view.
+                          properties:
+                            class:
+                              description: in-cluster | external-direct | external-snat
+                              type: string
+                            local:
+                              description: Pod side, old IP:port.
+                              type: string
+                            proto:
+                              description: tcp | udp
+                              type: string
+                            remote:
+                              description: Peer as the pod's socket sees it.
+                              type: string
+                            server:
+                              description: The migrated pod is the server side (Local
+                                is a listening port).
+                              type: boolean
+                            wire:
+                              description: |-
+                                Peer on the wire when the old node rewrote it (kube-proxy DNAT of a
+                                ClusterIP); empty if equal to Remote.
+                              type: string
+                          required:
+                          - class
+                          - local
+                          - proto
+                          - remote
+                          type: object
+                        type: array
+                      oldBoundListeners:
+                        description: |-
+                          TCP ports with a listener bound to the old IP itself (not 0.0.0.0);
+                          the target redirects new connections for them (self-IP fix-up).
+                        items:
+                          format: int32
+                          type: integer
+                        type: array
+                      udpServerPorts:
+                        description: |-
+                          Ports of the pod's unconnected UDP sockets (game servers, QUIC, DNS).
+                          Every node moves the NAT bindings of their clients that came through
+                          a Service from the old IP to the new one, keeping the masquerade port
+                          (docs/PHANTOM-MODE.md, "UDP servers").
+                        items:
+                          format: int32
+                          type: integer
+                        type: array
+                      unsupported:
+                        description: |-
+                          Flows Phantom mode cannot keep (peer outside the cluster). They are
+                          closed right after the restore so the application reconnects at once.
+                        format: int32
+                        type: integer
+                    type: object
+                  readyToFreezeAt:
+                    description: |-
+                      Pre-copy has converged. When the pod IP changes (no IP adapter), the
+                      replacement pod is only created now and the source keeps copying until
+                      the target sandbox is up, so the freeze contains no pod creation, CNI
+                      or kubelet latency.
+                    format: date-time
+                    type: string
+                  thawedAt:
+                    description: The source was thawed again after an error.
+                    format: date-time
+                    type: string
+                  transferDoneAt:
+                    description: All data (final dump, rootfs, emptyDir) has reached
+                      the target.
+                    format: date-time
+                    type: string
+                type: object
+              sourceNode:
+                type: string
+              sourcePodIP:
+                type: string
+              sourcePodUID:
+                type: string
+              startedAt:
+                format: date-time
+                type: string
+              target:
+                description: TargetStatus is written exclusively by the agent on the
+                  target node.
+                properties:
+                  addressReadyAt:
+                    description: |-
+                      Kept IP on Cilium: the replacement's /32 is on the target node ahead of
+                      the freeze (its pool generation's CIDR is in the node's CiliumNode).
+                    format: date-time
+                    type: string
+                  containers:
+                    items:
+                      description: TargetContainerStatus is written by the target
+                        agent.
+                      properties:
+                        coldStartReason:
+                          description: Set if the wrapper had to fall back to a cold
+                            start.
+                          type: string
+                        name:
+                          type: string
+                        restoreMs:
+                          format: int64
+                          type: integer
+                        restored:
+                          type: boolean
+                        targetContainerID:
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                  endpoint:
+                    description: Address at which the target agent accepts data (host:port).
+                    type: string
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  phantom:
+                    description: 'Phantom mode: state of the target node''s translation.'
+                    properties:
+                      deadFlows:
+                        description: |-
+                          Indexes into status.source.phantom.flows of connections that have ended;
+                          their rules are removed on every node.
+                        items:
+                          format: int32
+                          type: integer
+                        type: array
+                      newIP:
+                        description: The replacement pod's (new) IP and the target
+                          node's IP.
+                        type: string
+                      nodeIP:
+                        type: string
+                      programmedAt:
+                        description: |-
+                          The target node translates the flows (inbound pending until the
+                          restore). Other nodes program their side only after this.
+                        format: date-time
+                        type: string
+                      releasedAt:
+                        description: 'Every flow has ended or the pod is gone: all
+                          rules can be removed.'
+                        format: date-time
+                        type: string
+                    type: object
+                  preAttachedVolumes:
+                    description: |-
+                      Pod volumes (status.volumes[].name) attached to the target node in
+                      advance; set together with Ready.
+                    items:
+                      type: string
+                    type: array
+                  ready:
+                    description: Images pulled, receive directory ready.
+                    type: boolean
+                  restoreStartedAt:
+                    description: First container create on the target (start of the
+                      restore).
+                    format: date-time
+                    type: string
+                  restoredAt:
+                    description: Time at which the last container was running restored.
+                    format: date-time
+                    type: string
+                  sandboxReadyAt:
+                    description: |-
+                      Sandbox (network namespace with IP) ready on the target – measured by
+                      the wrapper with microsecond precision (pod conditions only have seconds).
+                    format: date-time
+                    type: string
+                  sandboxStagedAt:
+                    description: |-
+                      Commit gate: kubelet has the replacement through admission and volume
+                      setup and holds it right before its sandbox; the source freezes now.
+                    format: date-time
+                    type: string
+                type: object
+              targetNode:
+                type: string
+              targetPodIP:
+                type: string
+              targetPodName:
+                type: string
+              targetPodUID:
+                type: string
+              timings:
+                description: Timings summarizes the duration of each stage (milliseconds).
+                properties:
+                  cutoverMs:
+                    description: From source pod deletion until the replacement pod
+                      is bound.
+                    format: int64
+                    type: integer
+                  finalTransferMs:
+                    description: From freeze until all data has reached the target.
+                    format: int64
+                    type: integer
+                  freezeDumpMs:
+                    description: Final dump during the freeze.
+                    format: int64
+                    type: integer
+                  freezeMs:
+                    description: |-
+                      Freeze: how long the application was frozen – from its pause on the
+                      source (source.frozenAt) until the restored process runs on the
+                      target. Final dump, last transfer and restore lie within it. Clients
+                      notice somewhat more (TCP retransmission timing).
+                    format: int64
+                    type: integer
+                  preCopyMs:
+                    format: int64
+                    type: integer
+                  preflightMs:
+                    format: int64
+                    type: integer
+                  restoreMs:
+                    format: int64
+                    type: integer
+                  totalMs:
+                    format: int64
+                    type: integer
+                  volumeMoveMs:
+                    description: Volume detach+attach (from VolumeAttachment timestamps).
+                    format: int64
+                    type: integer
+                type: object
+              volumes:
+                description: PVCs that are re-attached (RWO) or shared along (RWX).
+                items:
+                  properties:
+                    attachedAt:
+                      format: date-time
+                      type: string
+                    bytes:
+                      format: int64
+                      type: integer
+                    claimName:
+                      type: string
+                    detachedAt:
+                      format: date-time
+                      type: string
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  type: object
+                type: array
+              warnings:
+                description: Warnings from preflight (e.g. CPU feature mismatch with
+                  Ignore).
+                items:
+                  type: string
+                type: array
+              wireBytes:
+                description: Total bytes transferred (all rounds, rootfs, emptyDir).
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,22 @@
+{{- /* Shared token for the agent-to-agent transfer. Generated once; on every
+upgrade the existing value is reused (lookup). A secret of the same name that
+Helm does not own (created by hand, for instance) is left alone and used as
+is. */ -}}
+{{- if not .Values.agent.token.existingSecret }}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace "paguro-agent-token" }}
+{{- if eq (include "paguro.ownedOrAbsent" (dict "root" $ "obj" $existing)) "true" }}
+{{- $token := "" }}
+{{- if $existing }}{{ $token = index $existing.data "token" | default "" }}{{ end }}
+{{- if not $token }}{{ $token = randAlphaNum 64 | b64enc }}{{ end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: paguro-agent-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+type: Opaque
+data:
+  token: {{ $token }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,80 @@
+# Paguro's alert rules (PrometheusRule, chart value monitoring.prometheusRule).
+# Metrics: docs/OPERATIONS.md.
+groups:
+  - name: paguro
+    rules:
+      - alert: PaguroMigrationFailed
+        expr: increase(paguro_migrations_total{result="Failed"}[15m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: A migration failed after its commit point
+          description: >-
+            A Failed migration happened after the source was gone: the workload was
+            restarted from its checkpoint or cold-started. `kubectl get migrations -A`
+            shows which one; its status.message and events say why.
+      - alert: PaguroRollbacksFrequent
+        expr: increase(paguro_migrations_total{result="RolledBack"}[1h]) > 3
+        labels: {severity: info}
+        annotations:
+          summary: Migrations keep rolling back
+          description: >-
+            More than three migrations rolled back within an hour. The workloads kept
+            running where they were; the abort reasons are in the Migrations' status.
+      - alert: PaguroFreezeSlow
+        expr: histogram_quantile(0.9, sum by (le) (rate(paguro_migration_freeze_seconds_bucket[1h]))) > 2
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: Migrations freeze workloads for more than 2 s (90th percentile)
+          description: >-
+            Large or busy pods, a slow network between nodes, or volumes moving inside
+            the freeze. docs/OPERATIONS.md, "Long freezes".
+      - alert: PaguroMigrationStuck
+        expr: max(paguro_migration_oldest_active_seconds) > 1800
+        labels: {severity: warning}
+        annotations:
+          summary: A migration has been running for more than 30 minutes
+          description: >-
+            Its phase in `kubectl get migrations -A` shows where it waits. Every
+            migration has an overall timeout (spec.timeoutSeconds).
+      - alert: PaguroUnmutatedPods
+        expr: max(paguro_unmutated_pods) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: Pods labeled migratable without Paguro's settings
+          description: >-
+            They were created while the webhook was unreachable and cannot be migrated.
+            Restart them (their events name them, reason Unmutated).
+      - alert: PaguroControllerMetricsAbsent
+        expr: absent(paguro_migration_oldest_active_seconds)
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: No metrics from the Paguro controller
+          description: The controller is down or not scraped; no migration makes progress without it.
+      - alert: PaguroTransferRefused
+        expr: increase(paguro_agent_transfer_refused_total[15m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: An agent refused checkpoint data
+          description: >-
+            A node sent data for a migration it is not the source of, or to a node that
+            is not its target. A misbehaving or compromised node, or a bug – the agent's
+            log ("transfer request refused") names the peer.
+      - alert: PaguroAgentCertificateExpiring
+        expr: (paguro_agent_transfer_cert_expiry_timestamp_seconds > 0) and (paguro_agent_transfer_cert_expiry_timestamp_seconds - time() < 86400)
+        labels: {severity: warning}
+        annotations:
+          summary: An agent's transfer certificate expires within a day
+          description: >-
+            Renewal (CertificateSigningRequest, signer paguro.dev/agent) keeps failing –
+            is the controller running? Without a valid certificate the node takes part
+            in no migration.
+      - alert: PaguroAgentUnavailable
+        expr: kube_daemonset_status_number_unavailable{daemonset="paguro-agent"} > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: Paguro agents unavailable
+          description: Nodes without a running agent can neither send nor receive migrations (needs kube-state-metrics).

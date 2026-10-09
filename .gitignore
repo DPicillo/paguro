@@ -1,0 +1,14 @@
+# Build output and image archives
+/bin/
+/kubectl-paguro
+/dist/
+*.tar
+*.test
+coverage.out
+.cache/
+
+# Binaries built at the top level by mistake (go build ./cmd/...)
+/paguro-agent
+/paguro-controller
+/paguro-runc
+/paguro-phantom-test

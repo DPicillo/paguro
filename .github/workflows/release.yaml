@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Release on a version tag (vX.Y.Z, or vX.Y.Z-rc.N for a release candidate):
+# images and chart to the GitHub Container Registry, SBOMs, vulnerability
+# scans (govulncheck, grype), the kubectl plugin, Artifact Hub's repository
+# metadata and a GitHub release with the changelog's section. Signed keyless
+# with Sigstore (this workflow's identity, see SECURITY.md) – once the
+# repository is public: the transparency log is public and names the
+# repository.
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # GitHub release
+  packages: write   # ghcr.io
+  id-token: write   # Sigstore keyless signing
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
+      SIGN: ${{ github.event.repository.private && 'false' || 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.22.0
+      - uses: sigstore/cosign-installer@v3
+      # Both download to a path of their own, not to PATH.
+      - uses: anchore/sbom-action/download-syft@v0
+        id: syft
+      - uses: anchore/scan-action/download-grype@v7
+        id: grype
+      - uses: imjasonh/setup-crane@v0.4
+      - uses: oras-project/setup-oras@v2
+      - name: Tools
+        run: |
+          make tools
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # ghcr.io takes lower-case names only.
+      - name: Registries and tools
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          {
+            echo "SYFT=${{ steps.syft.outputs.cmd }}"
+            echo "GRYPE=${{ steps.grype.outputs.cmd }}"
+            echo "OWNER=$owner"
+            echo "PAGURO_REGISTRY=ghcr.io/$owner/paguro"
+            echo "CHART_REGISTRY=oci://ghcr.io/$owner/charts"
+          } >> "$GITHUB_ENV"
+      - name: Registry login
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - run: make ci
+      # Known vulnerabilities the code reaches, minus reviewed exceptions
+      # (hack/vulncheck-accepted.txt) – as in the CI, which tags skip.
+      - run: make vulncheck
+      # Images (controller, agent, node installer, installer sources).
+      - run: make images-push installer-sources-push
+      # Fixable vulnerabilities of severity high or above fail the release.
+      - run: make image-scan
+      - run: make sbom
+      # Signatures and SBOM attestations (keyless) – public repositories only.
+      - if: env.SIGN == 'true'
+        run: make sign
+      # The chart's defaults and Artifact Hub's metadata: this registry, this
+      # version, a release candidate marked as such.
+      - name: Chart metadata
+        run: |
+          pre=false; case "$TAG" in *-*) pre=true ;; esac
+          sed -i -e "s#^\(      image: ghcr.io/\)[^/]*\(/paguro/[^:]*\):.*#\1$OWNER\2:$TAG#" \
+                 -e "s#^\(  artifacthub.io/prerelease:\).*#\1 \"$pre\"#" deploy/helm/paguro/Chart.yaml
+          sed -i "s#^  imageRegistry: localhost:5000/paguro\$#  imageRegistry: $PAGURO_REGISTRY#" deploy/helm/paguro/values.yaml
+          grep -q "imageRegistry: $PAGURO_REGISTRY\$" deploy/helm/paguro/values.yaml
+      - run: make chart-push
+      - if: env.SIGN == 'true'
+        run: make verify
+      # Artifact Hub's repository metadata (artifacthub-repo.yml) as the tag
+      # artifacthub.io next to the chart – with every release, candidates
+      # included. Artifact Hub reads the repository ID from it and shows the
+      # publisher as verified.
+      - run: make artifacthub-push
+      - run: make plugin-dist
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A release candidate carries the notes of the version it leads to.
+          version="${TAG%%-*}"
+          awk -v v="$version" '$0 ~ "^## "v" " {p=1; next} /^## / {p=0} p' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section '## $version '" >&2; exit 1; }
+          pre=; case "$TAG" in *-*) pre=--prerelease ;; esac
+          gh release create "$TAG" $pre --title "Paguro $TAG" --notes-file notes.md \
+            dist/sbom/*.spdx.json dist/paguro-*.tgz dist/plugin/*
