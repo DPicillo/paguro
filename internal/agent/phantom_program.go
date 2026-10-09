@@ -385,10 +385,23 @@ func (pm *phantomManager) apply(r *phantomRecord, mig phantom.Migration, flows [
 		all.Attachments = appendNew(all.Attachments, p.Attachments...)
 		all.Reservations = appendNew(all.Reservations, p.Reservations...)
 		all.ConntrackReservations = appendNew(all.ConntrackReservations, p.ConntrackReservations...)
+		all.Wire = append(all.Wire, p.Wire...)
 	}
 	t, err := pm.tr()
 	if err != nil {
 		return err
+	}
+	if r.Target {
+		// Entries from an earlier stay of the pod on this node would make
+		// every packet of a connection that is back at its old tuple
+		// INVALID (see phantom/stalect.go). Before the placeholders: they
+		// have the same shape.
+		keep := pm.reservationsInUse(r.UID).ConntrackReservations
+		if n, err := phantom.FlushStaleConntrack("", all.Wire, keep); err != nil {
+			pm.log.Warn("phantom: stale conntrack entries", "migration", r.Namespace+"/"+r.Name, "err", err)
+		} else if n > 0 {
+			pm.log.Info("phantom: stale conntrack entries removed", "migration", r.Namespace+"/"+r.Name, "entries", n)
+		}
 	}
 	r.Programmed = time.Now()
 	if err := pm.save(r); err != nil {

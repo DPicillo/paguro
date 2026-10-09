@@ -147,6 +147,10 @@ type PlanResult struct {
 	// ConntrackReservations are wire tuples to block for netfilter NAT
 	// (placeholder conntrack entries in the host netns of this node).
 	ConntrackReservations []Tuple
+	// Wire are the migrated flows' tuples on the wire at the target node
+	// (peer -> new address); stale conntrack entries of them go before the
+	// rules are installed (FlushStaleConntrack). Target node only.
+	Wire []Tuple
 	// Unsupported are flows Phantom mode cannot preserve (external peers).
 	Unsupported []Flow
 }
@@ -237,6 +241,7 @@ func (pl *planner) migratedSide(f Flow, oldL, newL, peerWire netip.AddrPort) {
 			Match:   Tuple{f.Proto, peerWire, newL},
 			Rewrite: Tuple{f.Proto, f.Remote, oldL}},
 	)
+	pl.res.Wire = append(pl.res.Wire, Tuple{f.Proto, peerWire, newL})
 	pl.podAttach(pl.ctx.Migrated)
 	if !f.Server {
 		// The pod initiated the flow: its new connections must not pick

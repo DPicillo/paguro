@@ -16,6 +16,20 @@ of killing them.
 > [known limitations](https://github.com/DPicillo/paguro#known-limitations)
 > before relying on it.
 
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=K8cjHf05mpQ"><img src="https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/demo-minecraft.webp" width="49%" alt="Minecraft Java Edition on Amazon EKS: the overlay shows a live migration of the server pod from an on-demand to a spot node, frozen 0.4 s, while the player keeps playing"></a>
+  <a href="https://www.youtube.com/watch?v=Jrs_qMJvzWM"><img src="https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/demo-redeclipse.webp" width="49%" alt="Red Eclipse, a UDP shooter, on Amazon EKS: the server pod migrates between nodes, frozen 0.3 s, and the match goes on"></a>
+</p>
+
+*Recorded on Amazon EKS (AWS VPC CNI, Phantom mode, Karpenter spot nodes):
+left a Minecraft Java Edition server (Cuberite, TCP), right Red Eclipse
+(UDP). Each migration takes about 2 s and freezes the server for 0.3–0.4 s;
+the players stay connected. The overlay top left is the demo's migration
+widget, next to it k9s on the game's pods. Full recordings (1 min each,
+on YouTube – or click a clip):
+[Minecraft](https://www.youtube.com/watch?v=K8cjHf05mpQ) ·
+[Red Eclipse](https://www.youtube.com/watch?v=Jrs_qMJvzWM).*
+
 - [How it works](#how-it-works)
 - [Prerequisites](#prerequisites)
 - [Install](#install)
@@ -82,7 +96,7 @@ is left alone. Full list:
 ## Install
 
 ```sh
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.1 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.2 \
   -n paguro-system --create-namespace
 kubectl -n paguro-system rollout status ds/paguro-agent
 ```
@@ -107,7 +121,7 @@ From the [GitHub release](https://github.com/DPicillo/paguro/releases)
 (archives for Linux, macOS and Windows, with a checksum file):
 
 ```sh
-VERSION=v0.1.1 OS=linux ARCH=amd64   # OS: linux, darwin, windows; ARCH: amd64, arm64
+VERSION=v0.1.2 OS=linux ARCH=amd64   # OS: linux, darwin, windows; ARCH: amd64, arm64
 curl -fsSLO https://github.com/DPicillo/paguro/releases/download/$VERSION/kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 tar -xzf kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 install -m 0755 kubectl-paguro_${VERSION}_${OS}_${ARCH}/kubectl-paguro ~/.local/bin/
@@ -329,7 +343,7 @@ the install instead of being ignored. Set values with `-f my-values.yaml` or
 | [`calico.yaml`](https://github.com/DPicillo/paguro/blob/main/deploy/helm/paguro/examples/calico.yaml) | Calico with calico-ipam: pods keep their IP |
 
 ```sh
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.1 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.2 \
   -n paguro-system --create-namespace \
   -f https://raw.githubusercontent.com/DPicillo/paguro/main/deploy/helm/paguro/examples/eks-karpenter.yaml
 ```

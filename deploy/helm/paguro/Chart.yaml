@@ -6,8 +6,8 @@ description: >-
   flows continue. Evictions (kubectl drain, Karpenter, Cluster Autoscaler)
   become migrations.
 type: application
-version: 0.1.1
-appVersion: "v0.1.1"
+version: 0.1.2
+appVersion: "v0.1.2"
 # Installed and checked on every minor version from 1.28 to 1.37 (kind,
 # hack/version-matrix.sh); migrations run on 1.37. The agents' admission
 # policies need 1.30 and the commit gate 1.34; both are skipped before.
@@ -55,15 +55,15 @@ annotations:
   # workflow sets the registry's owner and the version.
   artifacthub.io/images: |
     - name: paguro-controller
-      image: ghcr.io/dpicillo/paguro/paguro-controller:v0.1.1
+      image: ghcr.io/dpicillo/paguro/paguro-controller:v0.1.2
       platforms:
         - linux/amd64
     - name: paguro-agent
-      image: ghcr.io/dpicillo/paguro/paguro-agent:v0.1.1
+      image: ghcr.io/dpicillo/paguro/paguro-agent:v0.1.2
       platforms:
         - linux/amd64
     - name: paguro-node-installer
-      image: ghcr.io/dpicillo/paguro/paguro-node-installer:v0.1.1
+      image: ghcr.io/dpicillo/paguro/paguro-node-installer:v0.1.2
       platforms:
         - linux/amd64
   artifacthub.io/operator: "true"
@@ -75,6 +75,10 @@ annotations:
       url: https://github.com/DPicillo/paguro/blob/main/docs/INSTALL.md
     - name: The story behind Paguro
       url: https://www.picillo.de/blog/kubernetes-pod-live-migration/
+    - name: "Demo video: Minecraft (TCP)"
+      url: https://www.youtube.com/watch?v=K8cjHf05mpQ
+    - name: "Demo video: Red Eclipse (UDP)"
+      url: https://www.youtube.com/watch?v=Jrs_qMJvzWM
     - name: Support
       url: https://github.com/DPicillo/paguro/issues
     - name: Changelog
@@ -108,9 +112,19 @@ annotations:
           freezeBudgetMs: 500
           autoConverge: true
   artifacthub.io/changes: |
-    - kind: changed
-      description: Chart README and package page without the recording of a migration with a 25 GiB block volume (its freeze is not typical); no code changes
+    - kind: fixed
+      description: "Phantom mode: a connection survives when its pod comes back to a node and an address it held there before (the node's stale conntrack entries made it drop the packets as INVALID)"
+    - kind: added
+      description: README and package page show recordings of a Minecraft (TCP) and a Red Eclipse (UDP) server live-migrating on Amazon EKS
   artifacthub.io/screenshots: |
+    - title: Minecraft Java Edition on Amazon EKS – the server pod is being moved from an on-demand to a spot node while the player keeps playing
+      url: https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/demo-minecraft-live.jpg
+    - title: Migration done in 2.0 s, the server was frozen for 435 ms – the player is still connected
+      url: https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/demo-minecraft-done.jpg
+    - title: Red Eclipse (UDP) on Amazon EKS – a live migration during a deathmatch
+      url: https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/demo-redeclipse-live.jpg
+    - title: Migration done in 1.8 s, frozen 278 ms – the match goes on
+      url: https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/demo-redeclipse-done.jpg
     - title: How a live migration works – pre-copy while the pod runs, then a short freeze for the final dump and the restore on the target node
       url: https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/how-it-works.png
   artifacthub.io/recommendations: |

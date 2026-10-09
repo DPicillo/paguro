@@ -55,6 +55,10 @@ func TestPlanTargetAndPodPeer(t *testing.T) {
 	if len(res.Attachments) != 1 || res.Attachments[0] != (Attachment{Netns: "/run/netns/new", Ifname: "eth0", Kind: KindPod}) {
 		t.Errorf("target attachments: %v", res.Attachments)
 	}
+	// The wire tuple whose stale conntrack entries the target removes.
+	if len(res.Wire) != 1 || res.Wire[0] != (Tuple{TCP, ap("10.244.1.10:40000"), ap("10.244.3.20:7000")}) {
+		t.Errorf("target wire tuples: %v", res.Wire)
+	}
 
 	// Peer node with the client pod.
 	res, err = Plan(m, flows, NodeContext{LocalPods: map[netip.Addr]PodEndpoint{peerIP: {Netns: "/run/netns/peer", Ifname: "eth0"}}})
@@ -75,8 +79,8 @@ func TestPlanTargetAndPodPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Rules) != 0 || len(res.Attachments) != 0 {
-		t.Errorf("uninvolved node got %v / %v", res.Rules, res.Attachments)
+	if len(res.Rules) != 0 || len(res.Attachments) != 0 || len(res.Wire) != 0 {
+		t.Errorf("uninvolved node got %v / %v / %v", res.Rules, res.Attachments, res.Wire)
 	}
 }
 

@@ -4,6 +4,25 @@ All notable changes to Paguro. Versions follow [Semantic
 Versioning](https://semver.org); before 1.0 a minor version may change the
 API (`paguro.dev/v1alpha1`) and the chart's values.
 
+## v0.1.2 – 2026-10-10
+
+Fixed:
+
+- Phantom mode: a connection whose pod comes back to a node and an address
+  it held there before (the AWS VPC CNI hands a freed address out again)
+  no longer hangs. The node still had the connection's conntrack entries
+  from the pod's earlier stay, with old sequence numbers; window tracking
+  rated every packet INVALID and kube-proxy dropped it, in both directions.
+  Connections with little traffic stayed inside the old window and were
+  not affected. The target node now deletes such entries – exactly the
+  migrated flow's tuple, never one with NAT – before it translates.
+
+Added:
+
+- The README and the package page show recordings of a Minecraft Java
+  Edition (TCP) and a Red Eclipse (UDP) server live-migrating on Amazon
+  EKS: about 2 s per migration, 0.3–0.4 s frozen, players stay connected.
+
 ## v0.1.1 – 2026-10-09
 
 Documentation only: the chart's README and its Artifact Hub page no longer
