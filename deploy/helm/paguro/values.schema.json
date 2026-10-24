@@ -211,6 +211,16 @@
           "type": "boolean",
           "description": "Run the agent and the node installer only on nodes labelled paguro.dev/enabled=true; pods migrate only between such nodes."
         },
+        "bottlerocket": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "An agent of its own on Bottlerocket nodes (labelled paguro.dev/os=bottlerocket by the controller), running as super_t."
+            }
+          }
+        },
         "nodeSelector": {
           "$ref": "#/definitions/stringMap",
           "description": "Node selector of the agent DaemonSet."

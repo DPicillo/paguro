@@ -16,7 +16,7 @@ welcome as [issues](https://github.com/DPicillo/paguro/issues).
 | Connections | Kept IP (Cilium, Calico): established and new TCP connections through ClusterIP, NodePort, gateways and the pod IP – 0 failures; UDP sessions kept. Phantom mode (Flannel, Antrea, AWS VPC CNI): in-cluster TCP and UDP through a Service kept, longest gap 1.5–2.7 s; connections opened through a Service during the freeze complete about 3 s after the attempt; UDP clients on the pod IP lose the session. |
 | Data | RWX write-back, lock hand-over, RWO detach ordering; a 25 GiB RWO volume with an fsync'd journal: no hole; `emptyDir`s up to 10 GiB with a verified journal; NFS tested. CephFS, SMB and EFS not tested. |
 | Failure safety | Commit point, rollback, rescue path; components killed during pre-copy and right after the commit: every run succeeded or rolled back cleanly. Evictions become migrations; a failed one lets the eviction through; the webhooks fail open. |
-| Compatibility | Lab: Kubernetes 1.37, containerd 2.4, Ubuntu 24.04, Cilium, Calico, Flannel, Antrea; install checks on kind for 1.28–1.37. Amazon EKS 1.37: Amazon Linux 2023 nodes, AWS VPC CNI, Karpenter 1.14 (drift, deletion, spot warnings). Not supported: Bottlerocket, EKS Auto Mode, Fargate. Not run: GKE, AKS, arm64. |
+| Compatibility | Lab: Kubernetes 1.37, containerd 2.4, Ubuntu 24.04, Cilium, Calico, Flannel, Antrea; install checks on kind for 1.28–1.37. Amazon EKS 1.37: Amazon Linux 2023 nodes, AWS VPC CNI, Karpenter 1.14 (drift, deletion, spot warnings). Bottlerocket and EKS Auto Mode (unreleased, 2026-10-24). Not supported: Fargate. Not run: GKE, AKS, arm64. |
 | Operations | Helm-only install; `helm upgrade` during running migrations; documented uninstall; alert rules, PodMonitors, Grafana dashboard ([OPERATIONS.md](OPERATIONS.md)). |
 | Security | Mutual TLS 1.3 between agents with a certificate per node; admission policies hold each agent to its node; checkpoint janitor; signed images and chart with SBOM attestations; govulncheck and grype on every release ([SECURITY.md](../SECURITY.md)). |
 
@@ -33,15 +33,11 @@ welcome as [issues](https://github.com/DPicillo/paguro/issues).
    (AWS Fault Injection Service).
 2. **GKE and AKS** (Dataplane V2, Container-Optimized OS; Azure CNI):
    install, the regression runs, game servers, spot. On EKS: GPU nodes.
-3. **Bottlerocket and EKS Auto Mode.** SELinux is solved (2026-10-24,
-   INSTALL.md "SELinux"): pods labelled with categories of their own move
-   on enforcing nodes. The kernel has everything CRIU needs, but the node
-   installer stops: no `nsenter` and `ip` on the host,
-   runc under Bottlerocket's own path, a read-only root, a containerd
-   configuration rendered from Bottlerocket's settings. Needed: both tools
-   in the bundle, the bundle under a writable path, the runtime handler
-   through Bottlerocket's settings – and whether Auto Mode allows one on
-   its managed nodes at all.
+3. **Bottlerocket and EKS Auto Mode** – done (2026-10-24, INSTALL.md
+   "Bottlerocket"): nothing to set up, an agent of its own as `super_t`,
+   checkpoints in containerd's context, three CRIU patches. Open: the
+   expected SELinux denials CRIU's first attempts log; Karpenter node
+   pools with Bottlerocket (not run, nothing specific expected).
 4. **arm64** (Graviton): multi-architecture images, CRIU for arm64 in the
    installer, a CPU baseline per architecture, and stop-and-copy where
    CRIU has no soft-dirty tracking.

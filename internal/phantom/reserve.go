@@ -124,8 +124,24 @@ func updateReservedPorts(netnsPath string, ports []uint16, add bool) error {
 		if v == "" {
 			v = "\n" // the kernel accepts an empty list as a newline
 		}
-		return os.WriteFile(reservedPortsPath, []byte(v), 0o644)
+		return writeSysctl(reservedPortsPath, v)
 	})
+}
+
+// hostProc is the host's procfs as seen from the agent (hostPID).
+const hostProc = "/proc/1/root"
+
+// writeSysctl writes a /proc/sys file of the network namespace the calling
+// thread is in. A container that is not privileged (the agent on
+// Bottlerocket runs as super_t, which needs privileged: false) sees /proc/sys
+// read-only; the host's procfs is writable, and /proc/sys/net resolves
+// against the opener's network namespace there too.
+func writeSysctl(path, v string) error {
+	err := os.WriteFile(path, []byte(v), 0o644)
+	if errors.Is(err, unix.EROFS) {
+		err = os.WriteFile(hostProc+path, []byte(v), 0o644)
+	}
+	return err
 }
 
 // ReservePorts reserves client ports in a network namespace.

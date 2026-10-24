@@ -1,0 +1,216 @@
+From 0d6be39f47c5b5b1e26beb5942d45712193b5cf9 Mon Sep 17 00:00:00 2001
+From: Paguro <paguro@example.invalid>
+Date: Sat, 24 Oct 2026 21:44:22 +0200
+Subject: [PATCH] restore: make memory executable in the restored task if need
+ be
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CRIU maps its restorer blob writable and executable in the root task,
+premaps the tasks' private VMAs with their protection plus PROT_WRITE,
+and the restorer then switches each task to its SELinux label.
+Bottlerocket's policy never lets a host domain such as the runtime's
+(runtime_t) map memory writable and executable (execmem: neverallow
+host_s ... relax), only containers' domains, so the mmaps failed with
+EACCES ("Can't map restorer code", "Unable to map ANON_VMA") and no
+container could be restored there.
+
+If the restorer's mmap is refused, map it writable only, and premap
+executable VMAs without PROT_EXEC (VMA_PREMAP_NO_EXEC). Each task then
+switches to its label right before it jumps into the restorer – the
+restorer's first step otherwise, which it repeats harmlessly – and makes
+the blob executable; the restorer gives the premapped VMAs PROT_EXEC
+when it sets their final protection. Both happen in the container's
+domain, which may. Where the mmap succeeds, nothing changes.
+---
+ criu/cr-restore.c    | 53 ++++++++++++++++++++++++++++++++++++++++++++
+ criu/include/image.h |  2 ++
+ criu/include/mem.h   |  1 +
+ criu/mem.c           | 21 +++++++++++++++++-
+ criu/pie/restorer.c  |  6 +++--
+ 5 files changed, 80 insertions(+), 3 deletions(-)
+
+diff --git a/criu/cr-restore.c b/criu/cr-restore.c
+index e4afb08..5409e52 100644
+--- a/criu/cr-restore.c
++++ b/criu/cr-restore.c
+@@ -2534,6 +2534,11 @@ out:
+ 
+ static void *restorer;
+ static unsigned long restorer_len;
++/*
++ * The restorer and the premapped VMAs become executable in the restored
++ * task (exec_restorer_blob, VMA_PREMAP_NO_EXEC).
++ */
++bool restorer_exec_late;
+ 
+ static int prepare_restorer_blob(void)
+ {
+@@ -2561,6 +2566,19 @@ static int prepare_restorer_blob(void)
+ 	restorer_len = round_up(pbd.hdr.args_off, page_size());
+ 
+ 	restorer = mmap(NULL, restorer_len, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
++	if (restorer == MAP_FAILED && errno == EACCES) {
++		/*
++		 * SELinux may deny CRIU's domain memory that is writable and
++		 * executable (execmem) and allow it to the restored task's:
++		 * Bottlerocket never allows it to the runtime (runtime_t), but
++		 * to containers. Map the blob – and the tasks' VMAs – writable
++		 * only; every task makes them executable once it runs with its
++		 * own label.
++		 */
++		pr_info("No executable anonymous memory: the restorer becomes executable in the restored tasks\n");
++		restorer_exec_late = true;
++		restorer = mmap(NULL, restorer_len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
++	}
+ 	if (restorer == MAP_FAILED) {
+ 		pr_perror("Can't map restorer code");
+ 		return -1;
+@@ -2571,6 +2589,38 @@ static int prepare_restorer_blob(void)
+ 	return 0;
+ }
+ 
++/*
++ * With restorer_exec_late: switch the task to its SELinux label – what
++ * the restorer does first thing otherwise – and make the restorer
++ * executable in it.
++ */
++static int exec_restorer_blob(struct task_restore_args *ta)
++{
++	char *label = NULL;
++	int fd;
++
++	if (ta->lsm_type == LSMTYPE__SELINUX && ta->t->creds_args)
++		label = ta->t->creds_args->lsm_profile;
++	if (label) {
++		fd = openat(ta->proc_fd, "self/attr/current", O_WRONLY);
++		if (fd < 0) {
++			pr_perror("Can't open self/attr/current");
++			return -1;
++		}
++		if (write(fd, label, strlen(label)) < 0) {
++			pr_perror("Can't switch to the label %s", label);
++			close(fd);
++			return -1;
++		}
++		close(fd);
++	}
++	if (mprotect(ta->bootstrap_start, restorer_len, PROT_READ | PROT_WRITE | PROT_EXEC)) {
++		pr_perror("Can't make the restorer executable");
++		return -1;
++	}
++	return 0;
++}
++
+ static int remap_restorer_blob(void *addr)
+ {
+ 	struct parasite_blob_desc pbd;
+@@ -3552,6 +3602,9 @@ static int sigreturn_restore(pid_t pid, struct task_restore_args *task_args, uns
+ 	 * and restoring core is extremely destructive.
+ 	 */
+ 
++	if (restorer_exec_late && exec_restorer_blob(task_args))
++		goto err;
++
+ 	JUMP_TO_RESTORER_BLOB(new_sp, restore_task_exec_start, task_args);
+ 
+ err:
+diff --git a/criu/include/image.h b/criu/include/image.h
+index 30e3232..26e75d8 100644
+--- a/criu/include/image.h
++++ b/criu/include/image.h
+@@ -102,6 +102,8 @@
+ #define VMA_AREA_GUARD	 (1 << 16)
+ #define VMA_AREA_UPROBES	(1 << 17)
+ 
++/* Restore only: premapped without PROT_EXEC, the restorer adds it (restorer_exec_late) */
++#define VMA_PREMAP_NO_EXEC (1 << 26)
+ #define VMA_EXT_PLUGIN	  (1 << 27)
+ #define VMA_CLOSE	  (1 << 28)
+ #define VMA_NO_PROT_WRITE (1 << 29)
+diff --git a/criu/include/mem.h b/criu/include/mem.h
+index e9ce351..c7bb5af 100644
+--- a/criu/include/mem.h
++++ b/criu/include/mem.h
+@@ -28,6 +28,7 @@ extern bool page_in_parent(bool dirty);
+ extern int prepare_mm_pid(struct pstree_item *i);
+ extern void prepare_cow_vmas(void);
+ extern int do_task_reset_dirty_track(int pid);
++extern bool restorer_exec_late;
+ extern unsigned long dump_pages_args_size(struct vm_area_list *vmas);
+ extern int parasite_dump_pages_seized(struct pstree_item *item, struct vm_area_list *vma_area_list,
+ 				      struct mem_dump_ctl *mdc, struct parasite_ctl *ctl);
+diff --git a/criu/mem.c b/criu/mem.c
+index 2b41678..6f85c7a 100644
+--- a/criu/mem.c
++++ b/criu/mem.c
+@@ -917,6 +917,21 @@ void prepare_cow_vmas(void)
+ 	}
+ }
+ 
++/*
++ * The protection a VMA is premapped with: writable, so that its pages can
++ * be filled in. With restorer_exec_late not executable: CRIU's domain may
++ * not map writable and executable memory; the restorer adds PROT_EXEC in
++ * the task's own domain (VMA_PREMAP_NO_EXEC).
++ */
++static int premap_prot(struct vma_area *vma)
++{
++	int prot = vma->e->prot | PROT_WRITE;
++
++	if (vma->e->status & VMA_PREMAP_NO_EXEC)
++		prot &= ~PROT_EXEC;
++	return prot;
++}
++
+ /* Map a private vma, if it is not mapped by a parent yet */
+ static int premap_private_vma(struct pstree_item *t, struct vma_area *vma, void **tgt_addr)
+ {
+@@ -924,6 +939,10 @@ static int premap_private_vma(struct pstree_item *t, struct vma_area *vma, void
+ 	void *addr;
+ 	unsigned long nr_pages, size;
+ 
++	/* Also for a VMA inherited from the parent, premapped there so. */
++	if (restorer_exec_late && (vma->e->prot & PROT_EXEC))
++		vma->e->status |= VMA_PREMAP_NO_EXEC;
++
+ 	nr_pages = vma_entry_len(vma->e) / PAGE_SIZE;
+ 	vma->page_bitmap = xzalloc(BITS_TO_LONGS(nr_pages) * sizeof(long));
+ 	if (vma->page_bitmap == NULL)
+@@ -966,7 +985,7 @@ static int premap_private_vma(struct pstree_item *t, struct vma_area *vma, void
+ 		 * bits there. Ideally we'd check for the whole COW-chain
+ 		 * having any data in.
+ 		 */
+-		addr = mmap(*tgt_addr, size, vma->e->prot | PROT_WRITE, vma->e->flags | MAP_FIXED | flag, vma->e->fd,
++		addr = mmap(*tgt_addr, size, premap_prot(vma), vma->e->flags | MAP_FIXED | flag, vma->e->fd,
+ 			    vma->e->pgoff);
+ 
+ 		if (addr == MAP_FAILED) {
+diff --git a/criu/pie/restorer.c b/criu/pie/restorer.c
+index 5c40b0e..57101e9 100644
+--- a/criu/pie/restorer.c
++++ b/criu/pie/restorer.c
+@@ -1954,7 +1954,8 @@ __visible long __export_restore_task(struct task_restore_args *args)
+ 
+ 	/*
+ 	 * Walk though all VMAs again to drop PROT_WRITE
+-	 * if it was not there.
++	 * if it was not there – and to add PROT_EXEC where
++	 * it was premapped without (VMA_PREMAP_NO_EXEC).
+ 	 */
+ 	for (i = 0; i < args->vmas_n; i++) {
+ 		vma_entry = args->vmas + i;
+@@ -1962,7 +1963,8 @@ __visible long __export_restore_task(struct task_restore_args *args)
+ 		if (!(vma_entry_is(vma_entry, VMA_AREA_REGULAR)))
+ 			continue;
+ 
+-		if ((vma_entry->prot & PROT_WRITE) || (vma_entry->status & VMA_NO_PROT_WRITE))
++		if (!(vma_entry->status & VMA_PREMAP_NO_EXEC) &&
++		    ((vma_entry->prot & PROT_WRITE) || (vma_entry->status & VMA_NO_PROT_WRITE)))
+ 			continue;
+ 
+ 		sys_mprotect(decode_pointer(vma_entry->start), vma_entry_len(vma_entry), vma_entry->prot);
+-- 
+2.47.3
+

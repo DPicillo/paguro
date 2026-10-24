@@ -52,6 +52,11 @@ rules:
   - apiGroups: [""]
     resources: ["nodes", "persistentvolumeclaims", "persistentvolumes"]
     verbs: ["get", "list", "watch"]
+  # The label paguro.dev/os on Bottlerocket nodes (internal/controller/nodeos.go);
+  # controller-policy.yaml allows no other change to a node.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["patch"]
   - apiGroups: ["storage.k8s.io"]
     resources: ["volumeattachments"]
     verbs: ["get", "list", "watch"]

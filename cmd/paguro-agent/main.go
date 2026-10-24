@@ -42,27 +42,29 @@ import (
 
 // options are the agent's command-line flags.
 type options struct {
-	port         int
-	hostRoot     string
-	nsenter      bool
-	probeAddr    string
-	metricsAddr  string
-	ciliumSock   string
-	phantomMode  string
-	steerMark    uint32
-	commitGate   bool
-	kubeletDir   string
-	testFaults   bool
-	preAttach    bool
-	version      string
-	drainTimeout time.Duration
-	caFile       string
+	port           int
+	hostRoot       string
+	runtimeContext string
+	nsenter        bool
+	probeAddr      string
+	metricsAddr    string
+	ciliumSock     string
+	phantomMode    string
+	steerMark      uint32
+	commitGate     bool
+	kubeletDir     string
+	testFaults     bool
+	preAttach      bool
+	version        string
+	drainTimeout   time.Duration
+	caFile         string
 }
 
 func parseFlags() options {
 	var o options
 	flag.IntVar(&o.port, "port", v1.AgentPort, "port for the data transfer")
 	flag.StringVar(&o.hostRoot, "host-root", "/proc/1/root", "path to the host root (\"\" when running directly on the host)")
+	flag.StringVar(&o.runtimeContext, "runtime-selinux-context", "", "SELinux context checkpoints run in (via systemd-run); \"containerd\": the context of the containerd that serves the kubelet (Bottlerocket)")
 	flag.BoolVar(&o.nsenter, "nsenter", true, "run host programs in the host namespaces via nsenter")
 	flag.StringVar(&o.probeAddr, "health-addr", ":9557", "health probes")
 	flag.StringVar(&o.metricsAddr, "metrics-addr", ":9556", "Prometheus metrics")
@@ -170,10 +172,16 @@ func newAgent(o options, mgr ctrl.Manager, scheme *runtime.Scheme, clientset kub
 	if err != nil {
 		return nil, err
 	}
+	if o.runtimeContext == "containerd" {
+		if o.runtimeContext, err = agent.ContainerdContext("/proc"); err != nil {
+			return nil, fmt.Errorf("--runtime-selinux-context=containerd: %w", err)
+		}
+		logger.Info("checkpoints run in containerd's SELinux context", "context", o.runtimeContext)
+	}
 	a := &agent.Agent{
 		Client:     mgr.GetClient(),
 		APIReader:  mgr.GetAPIReader(),
-		Host:       &agent.Host{Root: o.hostRoot, Nsenter: o.nsenter, RuncRoot: v1.RuncRoot},
+		Host:       &agent.Host{Root: o.hostRoot, Nsenter: o.nsenter, RuncRoot: v1.RuncRoot, RuntimeContext: o.runtimeContext},
 		NodeName:   nodeName,
 		Endpoint:   net.JoinHostPort(ip, strconv.Itoa(o.port)),
 		Token:      token,

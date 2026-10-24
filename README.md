@@ -73,8 +73,7 @@ on YouTube – or click a clip):
 - It does not move data that belongs to a node: `hostPath` volumes and
   local PersistentVolumes are refused by the preflight (`emptyDir`s do
   move, with their content).
-- It does not run on CRI-O, Docker, Windows, Fargate, Bottlerocket or EKS
-  Auto Mode nodes.
+- It does not run on CRI-O, Docker, Windows or Fargate nodes.
 
 ## How it works
 
@@ -225,10 +224,10 @@ work" – unless it says "not supported".
 |---|---|
 | Kubernetes | 1.28–1.37: installed and checked on kind for every minor version (install, webhook, CRD validation, preflight, admission policies, commit gate, agent certificates). Migrations run on 1.37 (kubeadm lab, Amazon EKS) |
 | containerd | 2.0.7, 2.1.5, 2.4.1 (node installer tests); migrations on 2.4.1 and on EKS's Amazon Linux 2023 |
-| Node OS | Ubuntu 22.04 and 24.04, Debian 12, Amazon Linux 2023 (bundled CRIU verified); the lab runs Ubuntu 24.04 |
+| Node OS | Ubuntu 22.04 and 24.04, Debian 12, Amazon Linux 2023, Bottlerocket (bundled CRIU verified); the lab runs Ubuntu 24.04 |
 | Architecture | x86_64. arm64: not yet (images are amd64 only; CRIU has no pre-copy there) |
 | Distributions | kubeadm: tested. RKE2 and k3s: the node installer handles their containerd configuration; the agent has not been run there |
-| Amazon EKS | Kubernetes 1.37, managed node groups with Amazon Linux 2023: tested. Bottlerocket, EKS Auto Mode, Fargate, Amazon Linux 2: not supported |
+| Amazon EKS | Kubernetes 1.37, managed node groups with Amazon Linux 2023 or Bottlerocket, and EKS Auto Mode: tested (Bottlerocket and Auto Mode after 0.1.2). Fargate, Amazon Linux 2: not supported |
 | Karpenter | 1.14.1 on EKS: drift (including on-demand → spot), NodeClaim deletion, spot interruption warnings – tested |
 | GKE, AKS | not run yet |
 | Agones | 1.61 on Cilium 1.20: tested |

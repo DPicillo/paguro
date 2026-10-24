@@ -138,7 +138,7 @@ func (h *Host) Dump(ctx context.Context, r DumpRequest) (DumpResult, error) {
 	args = append(args, r.ContainerID)
 
 	start := time.Now()
-	_, err := h.Runc(ctx, args...)
+	_, err := h.RuncAsRuntime(ctx, args...)
 	res := DumpResult{Duration: time.Since(start)}
 	if err != nil {
 		// runc names CRIU's log dump.log for pre-dumps too.

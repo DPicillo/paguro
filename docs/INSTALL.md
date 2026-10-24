@@ -47,7 +47,7 @@ you built yourself ([below](#building-and-publishing-the-images)).
 | containerd | >= 2.0 | installer (hard) | tested: 2.0.7, 2.1.5, 2.4.1. CRI-O and Docker are not supported |
 | runc | >= 1.2 | installer (hard) | |
 | CRIU | >= 4.0 with nftables | installer | ships with the installer (4.2.1) if the host has nothing usable |
-| `nsenter`, `ip` on the host | required | installer (hard) | util-linux, iproute2 (present on every common distribution) |
+| `nsenter`, `ip` | – | installer | the host's own, or the installer's bundle where the host has none (Bottlerocket) |
 | SELinux | enforcing, permissive or off | – | also where the runtime labels every pod with categories of its own; see [SELinux](#selinux) |
 | Architecture | x86_64 | installer | **arm64: not yet.** The images are built for amd64 only, and CRIU has no pre-copy on arm64 (no soft-dirty tracking), so the freeze would last for the whole memory dump |
 | Kubernetes | >= 1.28 | Helm | installed and checked on 1.28–1.37 (kind), migrations run on 1.37; the admission policies for the agents need 1.30 (skipped before), the commit gate 1.34 |
@@ -223,8 +223,8 @@ tested on k3s/RKE2.
 | Node type | Status | Why |
 |---|---|---|
 | **Managed node groups / self-managed, AL2023 AMI** | supported | the node installer does everything |
-| Bottlerocket | not supported out of the box | see below |
-| EKS Auto Mode | not supported | its nodes are Bottlerocket, managed by AWS (see below) |
+| **Bottlerocket** (managed node groups) | supported | nothing to set up; an agent of its own (see below) |
+| EKS Auto Mode | **supported** | its nodes are Bottlerocket, managed by AWS (see below) |
 | Fargate | **not supported** | no privileged pods, no hostPID/hostNetwork, no DaemonSets, no access to containerd |
 | AL2 AMI | not supported | containerd 1.7, cgroup v1 (end of life) |
 | Windows | not supported | no CRIU |
@@ -281,30 +281,94 @@ What happens on an AL2023 node:
 
 ### Bottlerocket
 
-Not supported by the DaemonSet installer, for structural reasons:
+Nothing to set up: the same `helm install` as for AL2023, no custom image,
+no bootstrap container, no Bottlerocket settings. From the release after
+0.1.2 on (until then from a checkout of `main`, with images you built):
 
-* The root filesystem is **read-only** (dm-verity). `/usr/local/bin`,
-  `/usr/local/sbin` and `/opt` cannot be written; paguro-runc and CRIU have
-  nowhere to go.
-* `/etc/containerd/config.toml` is **generated from the settings API**
-  (templates in the OS image) on every boot and every settings change. There is
-  no imports directory and no setting for additional runtime handlers.
-* There is no shell or systemd access from the host; changes are only possible
-  through API settings and **bootstrap containers** (which run before
-  containerd/kubelet start).
+```
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro \
+  -n paguro-system --create-namespace
+kubectl -n paguro-system get ds    # paguro-agent and paguro-agent-bottlerocket
+```
 
-A port would need a bootstrap container that places CRIU, paguro-runc and the
-handler in writable locations before containerd starts, and that requires
-either a custom Bottlerocket variant or upstream support for additional runtime
-handlers. Use AL2023 for Paguro node groups.
+Tested on Amazon EKS 1.37 with a managed node group of Bottlerocket nodes
+(Bottlerocket OS 1.67.0, kernel 6.18, containerd 2.3.6, runc 1.3.6) and on
+EKS Auto Mode (below), SELinux enforcing as always on Bottlerocket
+(2026-10-24): a Python pod with state in memory, in an emptyDir and in its
+root filesystem moved four times between two nodes (freeze 366–459 ms), a
+JVM with JIT-compiled code twice (3.4 s – the replacement's start on the
+target, not the checkpoint – and 0.37 s); each time the same process went
+on, with SELinux categories of its own on the target.
 
-**EKS Auto Mode** runs Bottlerocket on nodes that AWS manages: no
-bootstrap containers and no settings of one's own. Tried on 2026-10-07
-(Bottlerocket 2026.9.24, kernel 6.18, containerd 2.2.8): the kernel has
-everything CRIU needs, and the node installer stops with "host has no
-'nsenter' in PATH", "host has no 'ip' in PATH" and "runc not found on the
-host". Give a cluster with Auto Mode a managed node group with AL2023 for
-the workloads that should migrate.
+What happens on a Bottlerocket node:
+
+* **Its own agent.** Bottlerocket's SELinux policy starts privileged
+  containers as `control_t`, which may neither change containerd's
+  configuration nor let CRIU work on other containers. Its trusted host
+  containers run as `super_t`. The controller labels every node whose OS
+  image is Bottlerocket `paguro.dev/os=bottlerocket` (an admission policy
+  allows it no other change to a node), and the chart runs the agent there
+  as a second DaemonSet, `paguro-agent-bottlerocket`: not privileged, with
+  every capability, unconfined seccomp and the SELinux type `super_t` – the
+  only way a pod can ask for that type. The standard agent stays off these
+  nodes; on a new node it may start for the second until the label is
+  there, and its installer then waits instead of failing.
+  `agent.bottlerocket.enabled=false` keeps Paguro off Bottlerocket nodes.
+* **A read-only root.** `/usr/local` cannot be written. The installer
+  puts `paguro-runc` into `/opt/paguro/bin` (on the data volume, kept across
+  reboots) and links nothing; paguro-runc and the agent find the bundle's
+  tools after the host's own. The bundle brings the host programs Paguro
+  runs and Bottlerocket lacks: `nsenter`, `ip`, `ss`, `cat`, `tee`, `rm`, and `tar` for CRIU (tmpfs mounts).
+  The installer runs host programs directly, never a host shell
+  (Bottlerocket's shell runs only a list of programs).
+* **containerd's configuration.** Bottlerocket renders
+  `/etc/containerd/config.toml` from its settings, and the file imports
+  `/etc/containerd/config.d/*.toml`: the installer writes the handler
+  there and restarts containerd once. `/etc` is a tmpfs on Bottlerocket, so
+  the drop-in is gone after a reboot; the agent's installer writes it again
+  when the agent starts – one containerd restart per boot, running
+  containers survive. Bottlerocket runs a second containerd for its own
+  host containers (`host-containerd.service`); the installer prepares the
+  one that serves the kubelet (`containerd.service`).
+* **Checkpoints in the runtime's context.** CRIU's parasite runs inside
+  the pod (`container_t`) and hands the pod's memory to CRIU through pipes.
+  Bottlerocket allows a container to write into the runtime's pipes
+  (`runtime_t`), not into those of `super_t`. The agent therefore starts
+  each `runc checkpoint` as a transient systemd unit
+  (`paguro-runc-<random>`) in containerd's own context
+  (`system_u:system_r:runtime_t:s0:c0.c1023`, read from the running
+  containerd) – with every MCS category, so CRIU may also reset the pod's
+  soft-dirty bits; its output goes to a file under `/run/paguro`. Restores run in that
+  context anyway (containerd starts paguro-runc). The checkpoints' CPU time
+  is therefore not charged to the agent's pod but to `system.slice`.
+* **SELinux labels.** Every pod has categories of its own; Paguro moves
+  them as described under [SELinux](#selinux).
+
+**EKS Auto Mode** runs Bottlerocket on nodes that AWS manages, and
+Paguro runs there the same way – nothing to set up, no node class of
+its own: the controller labels each node Auto Mode launches within
+seconds, and the agent prepares it. Tested on 2026-10-24 (Bottlerocket
+"EKS Auto, Standard" 2026.10.23, kernel 6.18, containerd 2.2.9): three
+migrations between two nodes of the `general-purpose` pool, freeze
+315–406 ms. Auto Mode consolidates nodes it finds underused; a migration
+needs a second node that the pod may run on (not the tainted `system`
+pool).
+
+**SELinux denials you will see.** Each pre-dump logs one denied `write`
+to a pod's `clear_refs` (CRIU tries first; then the pod's own process
+resets its soft-dirty bits through CRIU's parasite), and each restore one
+denied `execmem` for `runtime_t` (CRIU then maps its code writable only
+and makes it executable once the process runs with the pod's label).
+Both are expected and change nothing; any other denial is worth a look.
+
+**What it took in CRIU.** Bottlerocket's policy allows less than any
+other SELinux host Paguro runs on. The node installer's CRIU carries
+three patches for it (`build/criu-patches/0005`–`0007`), each a no-op
+where the host allows the usual way: the pod's process clears its own
+soft-dirty bits; tmpfs contents are archived as plain tar (GNU tar starts
+gzip through `/bin/sh`, which Bottlerocket's shell refuses; Paguro
+compresses its transfers anyway); and restored memory becomes executable
+only in the pod's own SELinux domain.
 
 ### Networking on EKS
 
@@ -382,12 +446,12 @@ and on a prepared node it changes nothing and finishes in under a second.
 
 | Step | Behaviour | Respects existing installs |
 |---|---|---|
-| Preflight | architecture, kernel, kernel config, cgroup v2, containerd >= 2.0, runc >= 1.2, `nsenter`/`ip` | hard failures stop the run **before** any change |
-| Bundle | `/opt/paguro/{bin,lib}`: CRIU 4.2.1 (nftables), nft 1.0.9, crictl 1.37 | only installed if the host lacks one of the tools |
+| Preflight | architecture, kernel, kernel config, cgroup v2, containerd >= 2.0, runc >= 1.2 | hard failures stop the run **before** any change |
+| Bundle | `/opt/paguro/{bin,lib}`: CRIU 4.2.1 (nftables), nft 1.0.9, crictl 1.37; `nsenter`, `ip`, `ss`, `cat`, `tee`, `rm`, `tar` for hosts without them | a host tool is always preferred: the bundle's are found after the host's PATH |
 | criu | symlink `/usr/local/sbin/criu → /opt/paguro/bin/criu` | **only** if the host has no criu >= 4.0 in containerd's PATH. Never a downgrade; an outdated binary at exactly that location is moved to `criu.pre-paguro` |
 | nft, crictl | symlink to `/usr/local/sbin` | only if missing |
 | `/etc/criu/runc.conf` | `ghost-limit 1G`, `network-lock nftables` (iptables fallback) | only if absent or carrying our marker line; a foreign file is kept (and reported) |
-| paguro-runc | `/usr/local/bin/paguro-runc`, copy + rename (atomic) | comes from the agent image (initContainer `stage-runtime`), so it always matches the agent version |
+| paguro-runc | `/usr/local/bin/paguro-runc` (`/opt/paguro/bin/paguro-runc` on a read-only root), copy + rename (atomic) | comes from the agent image (initContainer `stage-runtime`), so it always matches the agent version |
 | containerd handler | drop-in in the directory the main config imports, otherwise `<config dir>/conf.d` + imports line | an existing correct handler is left alone; a foreign, *incorrect* handler is a hard failure |
 | Validation | `containerd config dump` with the new config **before** the restart: the handler must be visible, and **every other setting must be byte-for-byte identical**, otherwise roll back | |
 | Restart | `systemctl restart <unit>`, only if the running daemon does not serve the handler yet (`crictl info`) | containers survive (`KillMode=process`), the kubelet reconnects |
@@ -428,10 +492,12 @@ Debian 12 and Amazon Linux 2023.
 
 PATH requirement: paguro-runc runs with containerd's environment and calls
 `nsenter`, `nft`, `ip` and (via runc) `criu` **by name**; the agent calls
-`criu`, `runc` and `crictl` via `nsenter` with the standard PATH. The installer
-therefore only links into `/usr/local/sbin` (part of the systemd default PATH)
-and checks that all tools are reachable through containerd's PATH (read from
-`/proc/<pid>/environ`).
+`criu`, `runc` and `crictl` via `nsenter` with the standard PATH. Both append
+the bundle's `/opt/paguro/bin` to their PATH, after the host's directories.
+The installer therefore only links into `/usr/local/sbin` (part of the
+systemd default PATH) – nothing at all on a read-only root – and checks that
+all tools are reachable through containerd's PATH (read from
+`/proc/<pid>/environ`) or the bundle.
 
 Manual run on a single node (for example before a rollout). `check` only
 reports and never changes anything; with `install` it does the same as the

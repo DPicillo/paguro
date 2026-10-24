@@ -72,7 +72,7 @@ groups:
             is the controller running? Without a valid certificate the node takes part
             in no migration.
       - alert: PaguroAgentUnavailable
-        expr: kube_daemonset_status_number_unavailable{daemonset="paguro-agent"} > 0
+        expr: kube_daemonset_status_number_unavailable{daemonset=~"paguro-agent(-bottlerocket)?"} > 0
         for: 15m
         labels: {severity: warning}
         annotations:

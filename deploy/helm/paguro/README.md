@@ -85,7 +85,7 @@ disconnected.
 | cgroups | v2 (unified hierarchy) |
 | CRIU | 4.0 or later – the node installer ships CRIU 4.2.1 where the host has none |
 | Namespace | must allow privileged pods: the agent runs privileged with hostPID and hostNetwork |
-| Not supported | Fargate, EKS Auto Mode, Bottlerocket, Amazon Linux 2 and Windows nodes |
+| Not supported | Fargate, Amazon Linux 2 and Windows nodes (Bottlerocket and EKS Auto Mode: from the release after 0.1.2) |
 
 You prepare nothing on the nodes: the chart's node installer checks every
 node and sets up CRIU, nftables and the containerd runtime handler `paguro`.
@@ -402,6 +402,7 @@ time) and `cni.stickyCIDR` (Cilium).
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `agent.onlyLabelledNodes` | bool | `false` | Run the agent and the node installer only on nodes labelled paguro.dev/enabled=true; pods migrate only between such nodes. |
+| `agent.bottlerocket.enabled` | bool | `true` | An agent of its own on Bottlerocket nodes (labelled paguro.dev/os=bottlerocket by the controller), running as super_t. |
 | `agent.nodeSelector` | map | `{}` | Node selector of the agent DaemonSet. |
 | `agent.tolerations` | list | `[{operator: Exists}]` | Tolerations of the agent DaemonSet. The agent must run on every node a migratable pod may run on, tainted nodes included. |
 | `agent.affinity` | map | `{}` | Affinity of the agent DaemonSet. |

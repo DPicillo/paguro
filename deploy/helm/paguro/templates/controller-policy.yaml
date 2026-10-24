@@ -1,0 +1,50 @@
+{{- /* The controller may patch nodes for one purpose only: the label
+paguro.dev/os=bottlerocket, which puts paguro-agent-bottlerocket on
+Bottlerocket nodes (internal/controller/nodeos.go). This policy holds it to
+that – no other label, no annotation, no spec change. Switched with the
+agents' policies (agent.restrictionPolicy.enabled). */ -}}
+{{- if and (dig "restrictionPolicy" "enabled" true .Values.agent) (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy") }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: paguro-controller-nodes
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["nodes"]
+  matchConditions:
+    - name: paguro-controller
+      expression: "request.userInfo.username == 'system:serviceaccount:{{ .Release.Namespace }}:paguro-controller'"
+  variables:
+    - name: oldLabels
+      expression: "oldObject.metadata.?labels.orValue({})"
+    - name: newLabels
+      expression: "object.metadata.?labels.orValue({})"
+  validations:
+    - expression: |-
+        object.spec == oldObject.spec &&
+        object.metadata.?annotations == oldObject.metadata.?annotations &&
+        object.metadata.?ownerReferences == oldObject.metadata.?ownerReferences &&
+        object.metadata.?finalizers == oldObject.metadata.?finalizers &&
+        variables.newLabels.all(k, k == 'paguro.dev/os' ||
+          (k in variables.oldLabels && variables.oldLabels[k] == variables.newLabels[k])) &&
+        variables.oldLabels.all(k, k == 'paguro.dev/os' || k in variables.newLabels) &&
+        (!('paguro.dev/os' in variables.newLabels) || variables.newLabels['paguro.dev/os'] == 'bottlerocket')
+      message: "paguro-controller may change nothing on a node but the label paguro.dev/os=bottlerocket"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: paguro-controller-nodes
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+spec:
+  policyName: paguro-controller-nodes
+  validationActions: [Deny]
+{{- end }}

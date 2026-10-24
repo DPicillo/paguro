@@ -68,6 +68,11 @@ const (
 	// registration): the agent removes it once it can take migrations, so
 	// that the node counts as initialized only then.
 	TaintAgentNotReady = "paguro.dev/agent-not-ready"
+	// LabelNodeOS is a node label set by the controller where the operating
+	// system needs an agent of its own: "bottlerocket" (the chart's
+	// paguro-agent-bottlerocket DaemonSet runs there, paguro-agent
+	// elsewhere).
+	LabelNodeOS = "paguro.dev/os"
 	// GateClaim is the name of the commit-gate claim in a replacement pod's
 	// spec.resourceClaims; the ResourceClaim itself is GateClaimPrefix plus
 	// the migration's UID suffix.
@@ -204,3 +209,9 @@ func UIDSuffix(uid string) string {
 	}
 	return string(out)
 }
+
+// BundleBin is where the node installer puts its programs on every node:
+// CRIU, nft, crictl and the host tools a minimal host may lack (nsenter,
+// ip, ss, cat, tee, rm). paguro-runc and the agent search it after the
+// host's own PATH, so a host keeps using its own tools where it has them.
+const BundleBin = "/opt/paguro/bin"

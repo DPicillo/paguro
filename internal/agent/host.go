@@ -7,14 +7,19 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"paguro.dev/paguro/pkg/names"
 )
 
 // Host encapsulates access to the node. The agent runs privileged with
@@ -28,6 +33,14 @@ type Host struct {
 	// Nsenter sends commands into the host mount namespace via nsenter.
 	Nsenter  bool
 	RuncRoot string
+	// RuntimeContext, if set, is the SELinux context checkpoints run in
+	// (Bottlerocket: containerd's, runtime_t:s0:c0.c1023). CRIU's parasite
+	// runs inside the container and writes the memory into CRIU's pipes; a
+	// pipe of the agent's own context (super_t there) is closed to
+	// containers, one of the runtime's is not – and with every MCS category
+	// CRIU may write the container's /proc files (clear_refs). systemd
+	// starts the dump in that context.
+	RuntimeContext string
 }
 
 func (h *Host) Path(p string) string { return filepath.Join(h.Root, p) }
@@ -39,6 +52,11 @@ func (h *Host) Run(ctx context.Context, stdin []byte, name string, args ...strin
 		argv = append([]string{"nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "-C", "--"}, argv...)
 	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	if h.Nsenter {
+		// nsenter looks the program up in the host's file system with our
+		// PATH; the bundle's tools come after the host's own.
+		cmd.Env = withBundlePath(os.Environ())
+	}
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -66,6 +84,45 @@ func (h *Host) ShieldRunner(ctx context.Context) func(stdin, name string, args .
 // Runc runs runc against containerd's state root.
 func (h *Host) Runc(ctx context.Context, args ...string) ([]byte, error) {
 	return h.Run(ctx, nil, "runc", append([]string{"--root", h.RuncRoot}, args...)...)
+}
+
+// RuncAsRuntime runs runc in RuntimeContext if one is set, else like Runc.
+// A transient systemd unit enters the context: systemd may, the agent may
+// not. The unit gets no pipe of ours (systemd-run --pipe hands them over
+// the bus, which may not use a pipe of the agent's context either); it
+// writes runc's output into a file under RunDir. As with Runc, a canceled
+// context leaves a running dump to finish – stopping CRIU halfway could
+// leave the container frozen.
+func (h *Host) RuncAsRuntime(ctx context.Context, args ...string) ([]byte, error) {
+	if h.RuntimeContext == "" {
+		return h.Runc(ctx, args...)
+	}
+	var id [8]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return nil, err
+	}
+	unit := "paguro-runc-" + hex.EncodeToString(id[:])
+	if err := os.MkdirAll(h.Path(names.RunDir), 0o700); err != nil {
+		return nil, err
+	}
+	outFile := filepath.Join(names.RunDir, unit+".out")
+	defer os.Remove(h.Path(outFile))
+	path := "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	for _, e := range withBundlePath(os.Environ()) {
+		if v, ok := strings.CutPrefix(e, "PATH="); ok {
+			path = v
+		}
+	}
+	argv := append([]string{"--wait", "--quiet", "--collect", "--unit=" + unit,
+		"--property=SELinuxContext=" + h.RuntimeContext,
+		"--property=StandardOutput=truncate:" + outFile, "--property=StandardError=inherit",
+		"--setenv=PATH=" + path, "--", "runc", "--root", h.RuncRoot}, args...)
+	_, err := h.Run(ctx, nil, "systemd-run", argv...)
+	out, _ := os.ReadFile(h.Path(outFile))
+	if err != nil {
+		return out, fmt.Errorf("runc %s (unit %s): %w: %s", strings.Join(args, " "), unit, err, tail(string(out), 600))
+	}
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -234,4 +291,51 @@ func SharedFS(fstype string) bool {
 		return true
 	}
 	return false
+}
+
+// withBundlePath appends the node installer's bin directory to PATH in env.
+func withBundlePath(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	found := false
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "PATH="); ok {
+			found = true
+			if !slices.Contains(filepath.SplitList(v), names.BundleBin) {
+				e += string(filepath.ListSeparator) + names.BundleBin
+			}
+		}
+		out = append(out, e)
+	}
+	if !found {
+		out = append(out, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:"+names.BundleBin)
+	}
+	return out
+}
+
+// ContainerdContext returns the SELinux context of the containerd that
+// serves the kubelet, read from proc (the host's /proc with hostPID): the
+// process named containerd in the unit containerd.service – Bottlerocket
+// runs a second one for its own host containers (host-containerd.service).
+func ContainerdContext(proc string) (string, error) {
+	dirs, _ := filepath.Glob(filepath.Join(proc, "[0-9]*"))
+	for _, d := range dirs {
+		comm, err := os.ReadFile(filepath.Join(d, "comm"))
+		if err != nil || strings.TrimSpace(string(comm)) != "containerd" {
+			continue
+		}
+		cg, _ := os.ReadFile(filepath.Join(d, "cgroup"))
+		if !slices.ContainsFunc(strings.Split(string(cg), "\n"), func(l string) bool {
+			return strings.HasPrefix(l, "0::") && strings.HasSuffix(l, "/containerd.service")
+		}) {
+			continue
+		}
+		attr, err := os.ReadFile(filepath.Join(d, "attr", "current"))
+		if err != nil {
+			return "", err
+		}
+		if c := strings.TrimRight(string(attr), "\x00\n"); c != "" {
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf("no containerd in containerd.service under %s", proc)
 }

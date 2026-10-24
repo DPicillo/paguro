@@ -140,6 +140,9 @@ func run(ctx context.Context, o options) error {
 	if err := rec.SetupWithManager(mgr); err != nil {
 		return err
 	}
+	if err := (&controller.NodeOSLabeler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		return err
+	}
 	if err := mgr.Add(newAudit(mgr, rec, o)); err != nil {
 		return err
 	}

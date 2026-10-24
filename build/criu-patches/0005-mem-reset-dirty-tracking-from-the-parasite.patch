@@ -1,0 +1,126 @@
+From d196c4eec1205081a5d7b7897a760a92e4323034 Mon Sep 17 00:00:00 2001
+From: Paguro <paguro@example.invalid>
+Date: Sat, 24 Oct 2026 21:19:48 +0200
+Subject: [PATCH] mem: reset the dirty tracking from the parasite where CRIU
+ may not
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CRIU clears a task's soft-dirty bits after each pre-dump by writing "4"
+to /proc/<pid>/clear_refs. Bottlerocket's SELinux policy lets no domain
+write a container's /proc files but the container's own – not the
+runtime's (runtime_t), not even its trusted host containers' (super_t) –
+so the open fails with EACCES and CRIU stopped at BUG_ON(ret == 1) in
+task_reset_dirty_track(), on the first pre-dump of every pod.
+
+The task itself may: on EACCES, CRIU asks the parasite, which runs in
+the task, to write its own /proc/self/clear_refs
+(PARASITE_CMD_RESET_DIRTY_TRACK). The bits are cleared at the same point
+as before, while the task is still seized. Elsewhere nothing changes:
+CRIU's own write succeeds and the parasite is not asked.
+---
+ criu/include/parasite.h |  1 +
+ criu/mem.c              | 15 ++++++++++++---
+ criu/pie/parasite.c     | 26 ++++++++++++++++++++++++++
+ 3 files changed, 39 insertions(+), 3 deletions(-)
+
+diff --git a/criu/include/parasite.h b/criu/include/parasite.h
+index 1763577..e224f75 100644
+--- a/criu/include/parasite.h
++++ b/criu/include/parasite.h
+@@ -37,6 +37,7 @@ enum {
+ 	PARASITE_CMD_CHECK_VDSO_MARK,
+ 	PARASITE_CMD_CHECK_AIOS,
+ 	PARASITE_CMD_DUMP_CGROUP,
++	PARASITE_CMD_RESET_DIRTY_TRACK,
+ 
+ 	PARASITE_CMD_MAX,
+ };
+diff --git a/criu/mem.c b/criu/mem.c
+index 9e8740c..2b41678 100644
+--- a/criu/mem.c
++++ b/criu/mem.c
+@@ -36,7 +36,7 @@
+ #include "protobuf.h"
+ #include "images/pagemap.pb-c.h"
+ 
+-static int task_reset_dirty_track(int pid)
++static int task_reset_dirty_track(int pid, struct parasite_ctl *ctl)
+ {
+ 	int ret;
+ 
+@@ -46,7 +46,16 @@ static int task_reset_dirty_track(int pid)
+ 	BUG_ON(!kdat.has_dirty_track);
+ 
+ 	ret = do_task_reset_dirty_track(pid);
+-	BUG_ON(ret == 1);
++	if (ret == 1) {
++		/*
++		 * EACCES: SELinux may let no domain but the task's own write
++		 * its clear_refs (Bottlerocket). The parasite runs in the task.
++		 */
++		pr_info("Reset %d's dirty tracking from the parasite\n", pid);
++		ret = compel_rpc_call_sync(PARASITE_CMD_RESET_DIRTY_TRACK, ctl);
++		if (ret)
++			pr_err("The parasite could not reset %d's dirty tracking\n", pid);
++	}
+ 	return ret;
+ }
+ 
+@@ -633,7 +642,7 @@ static int __parasite_dump_pages_seized(struct pstree_item *item, struct parasit
+ 	 * Step 4 -- clean up
+ 	 */
+ 
+-	ret = task_reset_dirty_track(item->pid->real);
++	ret = task_reset_dirty_track(item->pid->real, ctl);
+ 	if (ret)
+ 		goto out_xfer;
+ 	exit_code = 0;
+diff --git a/criu/pie/parasite.c b/criu/pie/parasite.c
+index c966e9e..e5ec2a4 100644
+--- a/criu/pie/parasite.c
++++ b/criu/pie/parasite.c
+@@ -862,6 +862,29 @@ void parasite_cleanup(void)
+ 	}
+ }
+ 
++/*
++ * Clear the soft-dirty bits from inside the task. CRIU writes the task's
++ * clear_refs itself; where SELinux allows no domain but the task's own to
++ * write it (Bottlerocket), the task does it through its own /proc.
++ */
++static int parasite_reset_dirty_track(void)
++{
++	int fd, ret;
++
++	fd = sys_open("/proc/self/clear_refs", O_WRONLY, 0);
++	if (fd < 0) {
++		pr_err("Can't open /proc/self/clear_refs (%d)\n", fd);
++		return -1;
++	}
++	ret = sys_write(fd, "4", 1);
++	sys_close(fd);
++	if (ret != 1) {
++		pr_err("Can't reset the dirty memory tracker (%d)\n", ret);
++		return -1;
++	}
++	return 0;
++}
++
+ int parasite_daemon_cmd(int cmd, void *args)
+ {
+ 	int ret;
+@@ -906,6 +929,9 @@ int parasite_daemon_cmd(int cmd, void *args)
+ 	case PARASITE_CMD_DUMP_CGROUP:
+ 		ret = parasite_dump_cgroup(args);
+ 		break;
++	case PARASITE_CMD_RESET_DIRTY_TRACK:
++		ret = parasite_reset_dirty_track();
++		break;
+ 	default:
+ 		pr_err("Unknown command in parasite daemon thread leader: %d\n", cmd);
+ 		ret = -1;
+-- 
+2.47.3
+

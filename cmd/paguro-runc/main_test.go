@@ -279,3 +279,13 @@ func TestEagerMayHelp(t *testing.T) {
 		}
 	}
 }
+
+// runc and the restore find the bundle's programs after containerd's PATH.
+func TestAppendBundlePath(t *testing.T) {
+	t.Setenv("PATH", "/usr/sbin:/usr/bin")
+	appendBundlePath()
+	appendBundlePath()
+	if got := os.Getenv("PATH"); got != "/usr/sbin:/usr/bin:"+names.BundleBin {
+		t.Fatalf("PATH %q", got)
+	}
+}

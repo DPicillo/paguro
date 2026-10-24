@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates git gcc make pkg-config python3 python3-protobuf python3-yaml \
       libprotobuf-dev libprotobuf-c-dev protobuf-c-compiler protobuf-compiler \
       libcap-dev libnl-3-dev libnet1-dev libnftables-dev libbsd-dev uuid-dev \
-      libselinux1-dev \
+      libselinux1-dev iproute2 \
       nftables patchelf file \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 --branch v${CRIU_VERSION} https://github.com/checkpoint-restore/criu.git /src/criu
@@ -48,9 +48,15 @@ RUN make -j"$(nproc)" criu 2>&1 | tee /tmp/criu-build.log && \
       echo "CRIU was built without nftables support - check libnftables-dev" >&2; exit 1; fi && \
     ./criu/criu --version | grep -q "Version: ${CRIU_VERSION}"
 COPY build/node-installer/bundle.sh /usr/local/bin/bundle.sh
+# Besides CRIU and nft: the host programs Paguro runs and CRIU runs (tar for
+# tmpfs mounts), for hosts that have none of their own (Bottlerocket: no
+# util-linux, no iproute2, no tar).
+# Agent and paguro-runc look for them in the bundle only after the host's
+# own (PATH appended), so a host that has them keeps using its own.
+ARG BUNDLE_TOOLS="/usr/bin/nsenter /usr/bin/ip /usr/bin/ss /usr/bin/cat /usr/bin/tee /usr/bin/rm /usr/bin/tar"
 RUN strip /src/criu/criu/criu && \
-    bash /usr/local/bin/bundle.sh /opt/paguro /src/criu/criu/criu /usr/sbin/nft && \
-    bash /usr/local/bin/bundle.sh --licenses /licenses/bundle /usr/sbin/nft && \
+    bash /usr/local/bin/bundle.sh /opt/paguro /src/criu/criu/criu /usr/sbin/nft ${BUNDLE_TOOLS} && \
+    bash /usr/local/bin/bundle.sh --licenses /licenses/bundle /usr/sbin/nft ${BUNDLE_TOOLS} && \
     cp /src/criu/COPYING /licenses/bundle/criu.COPYING && \
     cp /src/criu-patches.sha256 /opt/paguro/criu-patches.sha256 && \
     /opt/paguro/bin/criu --version && /opt/paguro/bin/nft --version && \
@@ -64,7 +70,7 @@ FROM criu AS sources-collect
 RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources && \
     apt-get update && apt-get install -y --no-install-recommends dpkg-dev && \
     mkdir -p /sources/ubuntu /sources/criu && cd /sources/ubuntu && \
-    for f in /opt/paguro/lib/* /usr/sbin/nft; do \
+    for f in /opt/paguro/lib/* /opt/paguro/bin/*; do \
       n=$(basename "$f"); p=$(dpkg -S "*/$n" 2>/dev/null | head -1 | cut -d: -f1); \
       [ -n "$p" ] && dpkg-query -W -f='${source:Package}=${source:Version}\n' "$p"; \
     done | sort -u > /sources/ubuntu/PACKAGES && \

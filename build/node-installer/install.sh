@@ -13,13 +13,21 @@
 #
 # What "prepare" means (each step respects existing installations):
 #   1. Preflight: architecture, kernel version/config, cgroup v2,
-#      containerd >= 2.0, runc >= 1.2, nsenter/ip on the host.
-#   2. Bundle (CRIU 4.2.1 with nftables, nft, crictl) -> /opt/paguro.
-#      Symlinks in /usr/local/sbin only where the host has no usable tool
-#      (criu >= 4.0, any nft, any crictl). Never downgrades a host install.
+#      containerd >= 2.0, runc >= 1.2.
+#   2. Bundle (CRIU 4.2.1 with nftables, nft, crictl, nsenter, ip, ss, cat,
+#      tee, rm, tar) -> /opt/paguro. Symlinks in /usr/local/sbin only where the
+#      host has no usable tool (criu >= 4.0, any nft, any crictl). Never
+#      downgrades a host install. Where /usr/local cannot be written (a
+#      read-only root: Bottlerocket) nothing is linked: paguro-runc and the
+#      agent find the bundle's tools after the host's own.
 #   3. /etc/criu/runc.conf (ghost-limit, network-lock) – only if absent or
 #      written by us earlier (marker line); a foreign file is left alone.
-#   4. paguro-runc -> /usr/local/bin/paguro-runc (copy + rename, atomic).
+#   4. paguro-runc -> /usr/local/bin/paguro-runc (copy + rename, atomic);
+#      /opt/paguro/bin/paguro-runc where /usr/local cannot be written.
+#
+# The installer never runs a shell on the host: some hosts have none, or one
+# that runs only a list of programs (Bottlerocket). Host programs are run
+# directly, host files read through the host root mount.
 #   5. containerd runtime handler "paguro" as a drop-in file in a directory
 #      the main config imports. The drop-in uses the same schema version as
 #      the main config (mixing v2 and v3 files silently drops settings in
@@ -38,7 +46,7 @@
 #   PAGURO_RUNTIME_HANDLER       containerd handler name            [paguro]
 #   PAGURO_ANNOTATION_PREFIX     annotations passed to the OCI spec [paguro.dev/*]
 #   PAGURO_RUNC_SRC              paguro-runc to install             [/stage/paguro-runc]
-#   PAGURO_RUNC_DEST             host path of the wrapper           [/usr/local/bin/paguro-runc]
+#   PAGURO_RUNC_DEST             host path of the wrapper           [/usr/local/bin/paguro-runc, see 4.]
 #   PAGURO_CONTAINERD_BIN        containerd binary (host path)      [auto]
 #   PAGURO_CONTAINERD_CONFIG     main config (host path)            [auto]
 #   PAGURO_CONTAINERD_UNIT       systemd unit to restart            [auto]
@@ -58,7 +66,7 @@ HOST_EXEC=${PAGURO_HOST_EXEC:-nsenter}
 HANDLER=${PAGURO_RUNTIME_HANDLER:-paguro}
 ANNOTATION=${PAGURO_ANNOTATION_PREFIX:-paguro.dev/*}
 RUNC_SRC=${PAGURO_RUNC_SRC:-/stage/paguro-runc}
-RUNC_DEST=${PAGURO_RUNC_DEST:-/usr/local/bin/paguro-runc}
+RUNC_DEST=${PAGURO_RUNC_DEST:-}   # decided in choose_paths
 CRIU_MIN=${PAGURO_CRIU_MIN_VERSION:-4.0}
 RESTART=${PAGURO_RESTART_CONTAINERD:-true}
 REQUIRE_PRECOPY=${PAGURO_REQUIRE_PRECOPY:-false}
@@ -124,6 +132,44 @@ hostrun() {
 	chroot) chroot "$HOST_ROOT" "$@" ;;
 	*) nsenter -t 1 -m -u -i -n -p -- "$@" ;;
 	esac
+}
+
+# host_which <tool> [path]: the first <tool> in a PATH (containerd's, or the
+# default) that exists on the host, as a host path – without a host shell.
+host_which() {
+	local d dirs
+	IFS=: read -ra dirs <<< "${2:-${CTD_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}}"
+	for d in "${dirs[@]}"; do
+		[ -n "$d" ] || continue
+		if [ -x "$(H "$d/$1")" ] && [ ! -d "$(H "$d/$1")" ]; then printf '%s\n' "$d/$1"; return 0; fi
+	done
+	return 1
+}
+
+# host_writable <dir>: could we create files in <dir> on the host? Probes
+# <dir>, or the nearest ancestor that exists, without creating anything
+# that stays. False on a read-only root.
+host_writable() {
+	local d=$1 probe
+	while [ ! -d "$(H "$d")" ] && [ "$d" != / ]; do d=$(dirname "$d"); done
+	probe="$(H "$d")/.paguro-write-test.$$"
+	: > "$probe" 2>/dev/null || return 1
+	rm -f "$probe"
+}
+
+# choose_paths: /usr/local where the host allows it (as on every common
+# distribution), the bundle's own prefix where it does not (a read-only root
+# such as Bottlerocket's).
+choose_paths() {
+	LINK_TOOLS=1
+	if [ -z "$RUNC_DEST" ]; then
+		if host_writable /usr/local/bin; then RUNC_DEST=/usr/local/bin/paguro-runc
+		else RUNC_DEST=$PREFIX/bin/paguro-runc; fi
+	fi
+	host_writable "$SBIN" || LINK_TOOLS=0
+	if [ $LINK_TOOLS -eq 0 ]; then
+		item host-paths read-only "/usr/local cannot be written – paguro-runc in $RUNC_DEST, the bundle's tools found after the host's own ($PREFIX/bin)"
+	fi
 }
 
 # ver_ge A B: true if version A >= B.
@@ -230,21 +276,29 @@ preflight() {
 		if [ "$fs" = cgroup2fs ]; then item cgroup ok v2; else err "cgroup v2 (unified hierarchy) required, found ${fs:-unknown}"; fi
 	fi
 
+	# paguro-runc and the agent run these; the bundle has them for hosts
+	# without (they are searched after the host's own).
 	for tool in nsenter ip; do
-		if p=$(hostrun sh -c "command -v $tool" 2>/dev/null) && [ -n "$p" ]; then :; else
-			err "host has no '$tool' in PATH (util-linux / iproute2) – paguro-runc needs it"
-		fi
+		host_which "$tool" >/dev/null || log "info: host has no '$tool' – the bundled one is used"
 	done
 }
 
 # ---------------------------------------------------------------------------
 # step 1b: containerd + runc discovery
 # ---------------------------------------------------------------------------
+# The containerd that serves kubelet. A node may run more than one:
+# Bottlerocket runs host-containerd (host-containerd.service) for its own
+# host containers next to kubelet's (containerd.service). The unit
+# containerd.service wins; otherwise the first one (k3s and RKE2 run a
+# single containerd inside their own service).
 find_containerd_pid() {
-	local d
+	local d first=""
 	for d in /proc/[0-9]*; do
-		[ "$(cat "$d/comm" 2>/dev/null)" = containerd ] && { basename "$d"; return 0; }
+		[ "$(cat "$d/comm" 2>/dev/null)" = containerd ] || continue
+		if grep -qE '^0::.*/containerd\.service$' "$d/cgroup" 2>/dev/null; then basename "$d"; return 0; fi
+		[ -n "$first" ] || first=$(basename "$d")
 	done
+	[ -n "$first" ] && { echo "$first"; return 0; }
 	return 1
 }
 
@@ -264,7 +318,7 @@ discover_containerd() {
 		[ -n "$CTD_UNIT" ] || CTD_UNIT=$(awk -F/ '/^0::/ { for (i = NF; i > 0; i--) if ($i ~ /\.service$/) { print $i; exit } }' "/proc/$pid/cgroup")
 		CTD_PATH=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n 's/^PATH=//p')
 	fi
-	[ -n "$CTD_BIN" ] || CTD_BIN=$(hostrun sh -c 'command -v containerd' 2>/dev/null)
+	[ -n "$CTD_BIN" ] || CTD_BIN=$(host_which containerd)
 	[ -n "$CTD_BIN" ] || fatal "containerd not found (no running process, not in host PATH) – Paguro needs containerd >= 2.0"
 	[ -n "$CTD_CFG" ] || CTD_CFG=/etc/containerd/config.toml
 	[ -n "$CTD_UNIT" ] || CTD_UNIT=containerd.service
@@ -299,7 +353,7 @@ discover_runtime() {
 	RUNC_BIN=$(dump_get "$TMP/before.toml" "$opts" BinaryName)
 	# Default handler may be a wrapper (nvidia-container-runtime): fall back to runc.
 	if [ -z "$RUNC_BIN" ] || [ "$(basename "$RUNC_BIN")" != runc ]; then
-		RUNC_BIN=$(hostrun sh -c 'command -v runc' 2>/dev/null)
+		RUNC_BIN=$(host_which runc)
 	fi
 	[ -n "$RUNC_BIN" ] || { err "runc not found on the host"; return; }
 	local rv; rv=$(hostrun "$RUNC_BIN" --version 2>/dev/null | head -n1 | semver)
@@ -394,6 +448,11 @@ provide() {
 		fi
 		warn "host $tool $foreign ${fv:-unknown} is older than $min – using the bundled one"
 	fi
+	if [ "${LINK_TOOLS:-1}" -eq 0 ]; then
+		item "$tool" ok "bundled ($ours, after the host's PATH)"
+		eval "EFFECTIVE_$tool=\$ours"
+		return
+	fi
 	if [ "$(readlink "$(H "$link")" 2>/dev/null)" = "$ours" ]; then
 		item "$tool" ok "bundled ($link -> $ours)"
 	elif dry; then
@@ -414,9 +473,10 @@ provide() {
 }
 
 check_path() {
-	# paguro-runc runs with containerd's environment and calls these by name.
+	# paguro-runc runs with containerd's environment and calls these by
+	# name; it appends the bundle's bin directory to that PATH.
 	local t d found
-	IFS=: read -ra dirs <<< "$CTD_PATH"
+	IFS=: read -ra dirs <<< "$CTD_PATH:$PREFIX/bin"
 	for t in criu nft nsenter ip; do
 		found=""
 		for d in "${dirs[@]}"; do [ -x "$(H "$d/$t")" ] && { found="$d/$t"; break; }; done
@@ -750,11 +810,29 @@ uninstall() {
 }
 
 # ---------------------------------------------------------------------------
+# bottlerocket_guard: on Bottlerocket only a container labelled super_t
+# may change the host; a privileged one runs as control_t. That is the
+# chart's standard agent on a new node for the moment until the controller
+# labels it paguro.dev/os=bottlerocket – the DaemonSet then removes it and
+# paguro-agent-bottlerocket (super_t) takes over. Wait without touching
+# anything instead of failing in between.
+bottlerocket_guard() {
+	grep -qx 'ID=bottlerocket' "$(H /etc/os-release)" 2>/dev/null || return 0
+	case "$(tr -d '\0' < /proc/self/attr/current 2>/dev/null)" in *:super_t:*) return 0 ;; esac
+	if [ "$MODE" = install ]; then
+		log "Bottlerocket node, but this container is not super_t – waiting for paguro-agent-bottlerocket to take over (the controller labels the node paguro.dev/os=bottlerocket)"
+		while :; do sleep 3600; done
+	fi
+	fatal "Bottlerocket: run the installer as super_t (securityContext of paguro-agent-bottlerocket: privileged false, all capabilities, seLinuxOptions type super_t), not privileged"
+}
+
 main() {
 	case "$MODE" in install | check | uninstall) ;; *) echo "usage: $0 [install|check|uninstall]" >&2; exit 2 ;; esac
 	log "paguro-node-installer $MODE (bundle $(cat "$BUNDLE_SRC/VERSION" 2>/dev/null), host root $HOST_ROOT, exec $HOST_EXEC)"
 	[ -d "$HOST_ROOT/etc" ] || fatal "host root not mounted at $HOST_ROOT"
+	bottlerocket_guard
 	lock
+	choose_paths
 	if [ "$MODE" = uninstall ]; then discover_containerd; uninstall; fi
 
 	preflight

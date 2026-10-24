@@ -30,6 +30,7 @@ const (
 	AnnotationNodeSubnets       = names.AnnotationNodeSubnets
 	AnnotationNodeTerminatesAt  = names.AnnotationNodeTerminatesAt
 	TaintAgentNotReady          = names.TaintAgentNotReady
+	LabelNodeOS                 = names.LabelNodeOS
 	AnnotationNetwork           = names.AnnotationNetwork
 	AnnotationTestFault         = names.AnnotationTestFault
 	RuntimeClassName            = names.RuntimeClassName

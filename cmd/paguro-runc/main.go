@@ -42,6 +42,7 @@ import (
 const waitForData = 100 * time.Second
 
 func main() {
+	appendBundlePath()
 	args := os.Args[1:]
 	inv := parse(args)
 
@@ -242,4 +243,21 @@ func create(inv invocation) (int, bool) {
 		return restoreContainer(inv, spec, uid), true
 	}
 	return 0, false
+}
+
+// appendBundlePath puts the node installer's programs after the PATH that
+// containerd gave us: runc finds the bundle's CRIU, and the restore its
+// tools (nsenter, nft, ss), on hosts without their own (Bottlerocket's
+// CRIU-less read-only root).
+func appendBundlePath() {
+	path := os.Getenv("PATH")
+	for _, d := range filepath.SplitList(path) {
+		if d == names.BundleBin {
+			return
+		}
+	}
+	if path == "" {
+		path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	}
+	_ = os.Setenv("PATH", path+string(filepath.ListSeparator)+names.BundleBin)
 }

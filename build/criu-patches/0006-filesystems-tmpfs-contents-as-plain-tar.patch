@@ -1,0 +1,85 @@
+From 9f92d0e9bd6b90ab1aea1031427a1f04468fc937 Mon Sep 17 00:00:00 2001
+From: Paguro <paguro@example.invalid>
+Date: Sat, 24 Oct 2026 21:33:37 +0200
+Subject: [PATCH] filesystems: tmpfs contents as plain tar, without gzip
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CRIU archived a tmpfs mount's contents with tar --gzip. GNU tar starts
+the compressor through /bin/sh -c; Bottlerocket's /bin/sh refuses to be
+run so ("expected first arg 'sh', not '/bin/sh'"), tar exits with status
+2 and the dump fails – every container has tmpfs mounts (/dev, the
+masked /sys/firmware), so no final dump succeeded there.
+
+Write plain tar archives. The images do not need gzip: Paguro compresses
+everything it transfers (zstd), and gzip ran inside the freeze. Restore
+recognises an older, gzip'ed image by its magic and extracts it as
+before; an image that cannot be read ahead (a stream) is taken for one.
+---
+ criu/filesystems.c | 26 +++++++++++++++++++++-----
+ 1 file changed, 21 insertions(+), 5 deletions(-)
+
+diff --git a/criu/filesystems.c b/criu/filesystems.c
+index 093e1c4..ef01490 100644
+--- a/criu/filesystems.c
++++ b/criu/filesystems.c
+@@ -2,6 +2,7 @@
+ #include <stdbool.h>
+ #include <string.h>
+ #include <fcntl.h>
++#include <unistd.h>
+ #include <sys/mount.h>
+ 
+ #include "common/config.h"
+@@ -417,7 +418,7 @@ static int tmpfs_dump(struct mount_info *pm)
+ 		userns_pid = root_item->pid->real;
+ 
+ 	ret = cr_system_userns(fd, img_raw_fd(img), -1, "tar",
+-			       (char *[]){ "tar", "--create", "--gzip", "--no-unquote", "--no-wildcards",
++			       (char *[]){ "tar", "--create", "--no-unquote", "--no-wildcards",
+ 					   "--one-file-system", "--check-links", "--preserve-permissions", "--sparse",
+ 					   "--numeric-owner", "--directory", "/proc/self/fd/0", ".", NULL },
+ 			       0, userns_pid);
+@@ -433,8 +434,23 @@ out:
+ 	return ret;
+ }
+ 
++/*
++ * tmpfs images used to be gzip'ed. GNU tar runs gzip through /bin/sh,
++ * which a host may not have or may not run so (Bottlerocket), so they are
++ * plain tar archives now; an older image is recognised by gzip's magic.
++ */
++static bool tmpfs_img_gzipped(int fd)
++{
++	unsigned char magic[2];
++
++	if (pread(fd, magic, sizeof(magic), 0) != sizeof(magic))
++		return true; /* a stream: assume the old format */
++	return magic[0] == 0x1f && magic[1] == 0x8b;
++}
++
+ static int tmpfs_restore(struct mount_info *pm)
+ {
++	char *argv[] = { "tar", "--extract", "--no-unquote", "--no-wildcards", "--directory", NULL, NULL, NULL };
+ 	int ret;
+ 	struct cr_img *img;
+ 
+@@ -450,10 +466,10 @@ static int tmpfs_restore(struct mount_info *pm)
+ 		return -1;
+ 	}
+ 
+-	ret = cr_system(img_raw_fd(img), -1, -1, "tar",
+-			(char *[]){ "tar", "--extract", "--gzip", "--no-unquote", "--no-wildcards", "--directory",
+-				    service_mountpoint(pm), NULL },
+-			0);
++	argv[5] = service_mountpoint(pm);
++	if (tmpfs_img_gzipped(img_raw_fd(img)))
++		argv[6] = "--gzip";
++	ret = cr_system(img_raw_fd(img), -1, -1, "tar", argv, 0);
+ 	close_image(img);
+ 
+ 	if (ret) {
+-- 
+2.47.3
+

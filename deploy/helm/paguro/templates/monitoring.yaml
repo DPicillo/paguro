@@ -30,7 +30,12 @@ metadata:
     {{- with dig "podMonitor" "labels" dict $mon }}{{ toYaml . | nindent 4 }}{{ end }}
 spec:
   selector:
+    {{- if eq $c.name "agent" }}
+    # Both DaemonSets: paguro-agent and paguro-agent-bottlerocket.
+    matchLabels: {app.kubernetes.io/component: agent, app.kubernetes.io/part-of: paguro}
+    {{- else }}
     matchLabels: {app.kubernetes.io/name: paguro-{{ $c.name }}}
+    {{- end }}
   podMetricsEndpoints:
     - port: {{ $c.port }}
       interval: 30s

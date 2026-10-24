@@ -18,8 +18,9 @@ privileged as a container runtime:
 | Component | Runs as | Can |
 |---|---|---|
 | `paguro-agent` (DaemonSet) | privileged, `hostPID`, `hostNetwork`, host root mounted for the node installer | checkpoint and restore any container on its node (CRIU), enter every pod's namespaces, change nftables/tc/routes on the node |
+| `paguro-agent-bottlerocket` (DaemonSet, Bottlerocket nodes) | the same, but as SELinux type `super_t` instead of privileged (all capabilities, unconfined seccomp) – what Bottlerocket's own trusted host containers run as | the same; it starts checkpoints as transient systemd units in the runtime's context (`runtime_t`) |
 | `paguro-runc` (on each node) | root, called by containerd for pods with RuntimeClass `paguro` | restore a container from a checkpoint before it starts |
-| `paguro-controller` (Deployment) | non-root, no capabilities, read-only root filesystem, distroless image | delete and create pods, manage EndpointSlices and Services for migrated pods, sign the agents' certificates; its webhook mutates pods marked migratable |
+| `paguro-controller` (Deployment) | non-root, no capabilities, read-only root filesystem, distroless image | delete and create pods, manage EndpointSlices and Services for migrated pods, sign the agents' certificates, label Bottlerocket nodes `paguro.dev/os=bottlerocket` (an admission policy allows it no other change to a node, Kubernetes ≥ 1.30); its webhook mutates pods marked migratable |
 
 Anyone who controls an agent controls its node. Paguro's job is to keep it
 at that: one node must not become the cluster.

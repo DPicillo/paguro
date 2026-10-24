@@ -21,6 +21,34 @@ Added:
   381/408 ms, the replacement with categories of its own, no denial.
   Enforcing without labelling (the AMI's containerd configuration) and
   permissive (its default) worked before and still do.
+- Bottlerocket, with nothing to set up: the same `helm install`. The
+  controller labels Bottlerocket nodes `paguro.dev/os=bottlerocket`, and
+  the chart runs the agent there as `paguro-agent-bottlerocket` with the
+  SELinux type `super_t` (Bottlerocket starts privileged containers as
+  `control_t`, which may not prepare the node). The node installer works
+  with a read-only root (paguro-runc and its tools in `/opt/paguro`),
+  without a host shell, with containerd's `config.d` and with
+  Bottlerocket's second containerd; the bundle brings `nsenter`, `ip`,
+  `ss`, `cat`, `tee`, `rm` and `tar`. Checkpoints run in the runtime's SELinux
+  context (`runtime_t`, through a transient systemd unit), where CRIU's
+  parasite may hand over the pod's memory. Three CRIU patches, no-ops
+  elsewhere: the pod's process clears its own soft-dirty bits (no other
+  domain may write its `clear_refs`); tmpfs contents are archived as plain
+  tar (GNU tar starts gzip through `/bin/sh`, which Bottlerocket's shell
+  refuses; Paguro compresses its transfers anyway, and gzip ran inside the
+  freeze); restored memory becomes executable only in the pod's domain
+  (`runtime_t` may never map memory writable and executable). Tested on
+  EKS 1.37 with Bottlerocket 1.67.0: four migrations of a pod with state
+  in memory, emptyDir and root filesystem (freeze 366–459 ms) and two of a
+  JVM with JIT-compiled code, each with SELinux categories of its own on
+  the target.
+- EKS Auto Mode: its nodes are Bottlerocket, and Paguro runs there the
+  same way, nothing to set up. Three migrations, freeze 315–406 ms.
+
+Changed:
+
+- The chart's controller may patch nodes – only the label `paguro.dev/os`,
+  held to that by an admission policy (`agent.restrictionPolicy.enabled`).
 
 ## v0.1.2 – 2026-10-10
 

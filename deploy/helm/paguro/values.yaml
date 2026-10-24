@@ -85,6 +85,15 @@ agent:
   # Run the agent (and the node installer) only on nodes labelled
   # paguro.dev/enabled=true. Pods migrate only between such nodes.
   onlyLabelledNodes: false
+  # Bottlerocket nodes get an agent of their own (paguro-agent-bottlerocket):
+  # Bottlerocket's SELinux policy starts privileged containers as control_t,
+  # which may not configure containerd or label CRIU's sockets, so that
+  # agent and its node installer run as super_t (not privileged, every
+  # capability). The controller recognises Bottlerocket nodes and labels
+  # them paguro.dev/os=bottlerocket; nothing to set up. false: no agent on
+  # Bottlerocket nodes. Needs nodeInstaller.enabled.
+  bottlerocket:
+    enabled: true
   nodeSelector: {}
   # The agent must run everywhere a migratable pod may run, tainted nodes
   # included.

@@ -91,84 +91,124 @@ subjects:
   - kind: ServiceAccount
     name: paguro-agent
     namespace: {{ $ns }}
+{{- /* One DaemonSet per kind of node. "paguro-agent" runs privileged on
+every node but Bottlerocket's. Bottlerocket (SELinux always enforcing, every
+pod labelled) starts privileged containers as control_t, which may neither
+write containerd's configuration nor label CRIU's sockets; its agent runs as
+super_t instead – not privileged, with every capability, the only way to
+ask for an SELinux type there. The controller labels Bottlerocket nodes
+(paguro.dev/os), so each kind gets its DaemonSet without any setting. */ -}}
+{{- $osLabel := "paguro.dev/os" }}
+{{- $br := and (dig "bottlerocket" "enabled" true .Values.agent) .Values.nodeInstaller.enabled }}
+{{- $privileged := dict "privileged" true }}
+{{- $superT := dict "privileged" false "allowPrivilegeEscalation" true
+      "capabilities" (dict "add" (list "ALL"))
+      "seccompProfile" (dict "type" "Unconfined")
+      "seLinuxOptions" (dict "user" "system_u" "role" "system_r" "type" "super_t" "level" "s0") }}
+{{- /* The standard agent keeps off Bottlerocket nodes, also with
+agent.bottlerocket.enabled false (it could not prepare them): one more
+requirement in every term of the user's node affinity (or a term of its
+own). */ -}}
+{{- $aff := deepCopy (.Values.agent.affinity | default dict) }}
+{{- $na := get $aff "nodeAffinity" | default dict }}
+{{- $req := get $na "requiredDuringSchedulingIgnoredDuringExecution" | default dict }}
+{{- $terms := get $req "nodeSelectorTerms" | default (list (dict)) }}
+{{- $notBR := dict "key" $osLabel "operator" "NotIn" "values" (list "bottlerocket") }}
+{{- $merged := list }}
+{{- range $t := $terms }}
+{{- $merged = append $merged (set (deepCopy $t) "matchExpressions" (append ((get $t "matchExpressions") | default list) $notBR)) }}
+{{- end }}
+{{- $_ := set $req "nodeSelectorTerms" $merged }}
+{{- $_ := set $na "requiredDuringSchedulingIgnoredDuringExecution" $req }}
+{{- $_ := set $aff "nodeAffinity" $na }}
+{{- $variants := list (dict "name" "paguro-agent" "bottlerocket" false "securityContext" $privileged "affinity" $aff) }}
+{{- if $br }}
+{{- $variants = append $variants (dict "name" "paguro-agent-bottlerocket" "bottlerocket" true "securityContext" $superT "affinity" .Values.agent.affinity) }}
+{{- end }}
+{{- range $v := $variants }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: paguro-agent
-  namespace: {{ $ns }}
+  name: {{ $v.name }}
+  namespace: {{ $.Release.Namespace }}
   labels:
-    app.kubernetes.io/name: paguro-agent
-    {{- include "paguro.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ $v.name }}
+    app.kubernetes.io/component: agent
+    {{- include "paguro.labels" $ | nindent 4 }}
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: paguro-agent
+      app.kubernetes.io/name: {{ $v.name }}
   updateStrategy:
-    {{- toYaml .Values.agent.updateStrategy | nindent 4 }}
+    {{- toYaml $.Values.agent.updateStrategy | nindent 4 }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: paguro-agent
+        app.kubernetes.io/name: {{ $v.name }}
+        app.kubernetes.io/component: agent
         app.kubernetes.io/part-of: paguro
       annotations:
         # Scrape without the Prometheus Operator (with it: PodMonitor).
         prometheus.io/scrape: "true"
-        prometheus.io/port: "{{ .Values.agent.ports.metrics }}"
+        prometheus.io/port: "{{ $.Values.agent.ports.metrics }}"
     spec:
       serviceAccountName: paguro-agent
       # On SIGTERM the agent first lets the migrations on its node finish
       # (agent.drainTimeoutSeconds).
-      terminationGracePeriodSeconds: {{ add .Values.agent.drainTimeoutSeconds 15 }}
-      {{- include "paguro.imagePullSecrets" . | nindent 6 }}
+      terminationGracePeriodSeconds: {{ add $.Values.agent.drainTimeoutSeconds 15 }}
+      {{- include "paguro.imagePullSecrets" $ | nindent 6 }}
       hostNetwork: true
       hostPID: true
       dnsPolicy: ClusterFirstWithHostNet
-      {{- with .Values.agent.priorityClassName }}
+      {{- with $.Values.agent.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
-      {{- if or .Values.agent.onlyLabelledNodes .Values.agent.nodeSelector }}
+      {{- if or $.Values.agent.onlyLabelledNodes $.Values.agent.nodeSelector $v.bottlerocket }}
       nodeSelector:
-        {{- if .Values.agent.onlyLabelledNodes }}
+        {{- if $.Values.agent.onlyLabelledNodes }}
         paguro.dev/enabled: "true"
         {{- end }}
-        {{- with .Values.agent.nodeSelector }}
+        {{- if $v.bottlerocket }}
+        {{ $osLabel }}: bottlerocket
+        {{- end }}
+        {{- with $.Values.agent.nodeSelector }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- end }}
-      {{- with .Values.agent.tolerations }}
+      {{- with $.Values.agent.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.agent.affinity }}
+      {{- with $v.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
-      {{- if .Values.nodeInstaller.enabled }}
+      {{- if $.Values.nodeInstaller.enabled }}
         - name: stage-runtime
           image: {{ $agentImage }}
-          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
           command: ["/bin/sh", "-c", "cp /usr/local/bin/paguro-runc /stage/paguro-runc"]
           resources:
-            {{- toYaml .Values.nodeInstaller.resources | nindent 12 }}
+            {{- toYaml $.Values.nodeInstaller.resources | nindent 12 }}
           volumeMounts:
             - {name: stage, mountPath: /stage}
         # Idempotent: on a prepared node it changes nothing (< 1 s). Hard
         # failures (kernel features, containerd < 2.0, runc < 1.2) end in
         # Init:Error – see `kubectl logs <pod> -c node-installer`.
         - name: node-installer
-          image: {{ include "paguro.image" (dict "root" $ "img" .Values.nodeInstaller.image) }}
-          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          image: {{ include "paguro.image" (dict "root" $ "img" $.Values.nodeInstaller.image) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
           args: ["install"]
           env:
             - {name: HOST_ROOT, value: /host}
             - {name: PAGURO_RUNC_SRC, value: /stage/paguro-runc}
-            - {name: PAGURO_RUNTIME_HANDLER, value: {{ .Values.runtimeClass.handler | quote }}}
-            - {name: PAGURO_RESTART_CONTAINERD, value: {{ .Values.nodeInstaller.restartContainerd | quote }}}
-            - {name: PAGURO_CRIU_MIN_VERSION, value: {{ .Values.nodeInstaller.criuMinVersion | quote }}}
-            - {name: PAGURO_REQUIRE_PRECOPY, value: {{ .Values.nodeInstaller.requirePrecopy | quote }}}
-            {{- with .Values.nodeInstaller.containerd }}
+            - {name: PAGURO_RUNTIME_HANDLER, value: {{ $.Values.runtimeClass.handler | quote }}}
+            - {name: PAGURO_RESTART_CONTAINERD, value: {{ $.Values.nodeInstaller.restartContainerd | quote }}}
+            - {name: PAGURO_CRIU_MIN_VERSION, value: {{ $.Values.nodeInstaller.criuMinVersion | quote }}}
+            - {name: PAGURO_REQUIRE_PRECOPY, value: {{ $.Values.nodeInstaller.requirePrecopy | quote }}}
+            {{- with $.Values.nodeInstaller.containerd }}
             {{- if .binary }}
             - {name: PAGURO_CONTAINERD_BIN, value: {{ .binary | quote }}}
             {{- end }}
@@ -182,9 +222,10 @@ spec:
             - {name: PAGURO_DROPIN_DIR, value: {{ .dropInDir | quote }}}
             {{- end }}
             {{- end }}
-          securityContext: {privileged: true}
+          securityContext:
+            {{- toYaml $v.securityContext | nindent 12 }}
           resources:
-            {{- toYaml .Values.nodeInstaller.resources | nindent 12 }}
+            {{- toYaml $.Values.nodeInstaller.resources | nindent 12 }}
           volumeMounts:
             - {name: host-root, mountPath: /host, mountPropagation: HostToContainer}
             - {name: stage, mountPath: /stage, readOnly: true}
@@ -194,7 +235,7 @@ spec:
         # half-written file.
         - name: install-runtime
           image: {{ $agentImage }}
-          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -211,57 +252,64 @@ spec:
       containers:
         - name: agent
           image: {{ $agentImage }}
-          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
           args:
-            - --port={{ .Values.agent.ports.transfer }}
-            - --metrics-addr=:{{ .Values.agent.ports.metrics }}
-            - --health-addr=:{{ .Values.agent.ports.health }}
-            - --phantom={{ if dig "enabled" true (.Values.phantom | default dict) }}auto{{ else }}off{{ end }}
-            - --phantom-steering-mark={{ dig "steeringMark" "0x2000" (.Values.phantom | default dict) }}
-            - --commit-gate={{ dig "enabled" true (.Values.commitGate | default dict) }}
-            - --kubelet-dir={{ include "paguro.kubeletDir" . }}
-            - --version={{ .Values.agent.image.tag | default .Values.global.imageTag | default .Chart.AppVersion }}
-            - --drain-timeout={{ .Values.agent.drainTimeoutSeconds }}s
+            - --port={{ $.Values.agent.ports.transfer }}
+            - --metrics-addr=:{{ $.Values.agent.ports.metrics }}
+            - --health-addr=:{{ $.Values.agent.ports.health }}
+            - --phantom={{ if dig "enabled" true ($.Values.phantom | default dict) }}auto{{ else }}off{{ end }}
+            - --phantom-steering-mark={{ dig "steeringMark" "0x2000" ($.Values.phantom | default dict) }}
+            - --commit-gate={{ dig "enabled" true ($.Values.commitGate | default dict) }}
+            - --kubelet-dir={{ include "paguro.kubeletDir" $ }}
+            - --version={{ $.Values.agent.image.tag | default $.Values.global.imageTag | default $.Chart.AppVersion }}
+            - --drain-timeout={{ $.Values.agent.drainTimeoutSeconds }}s
+            {{- if $v.bottlerocket }}
+            # Checkpoints in containerd's context (runtime_t, every MCS
+            # category): CRIU's parasite may write into its pipes there, not
+            # into super_t's.
+            - --runtime-selinux-context=containerd
+            {{- end }}
             {{- if $transferTLS }}
             - --transfer-ca=/etc/paguro/transfer-ca/ca.crt
             {{- end }}
             {{- if $preAttach }}
             - --pre-attach=true
             {{- end }}
-            {{- if .Values.agent.testFaults }}
+            {{- if $.Values.agent.testFaults }}
             - --test-faults=true
             {{- end }}
-            {{- range .Values.agent.extraArgs }}
+            {{- range $.Values.agent.extraArgs }}
             - {{ . | quote }}
             {{- end }}
           env:
             - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
             - name: PAGURO_TOKEN
-              valueFrom: {secretKeyRef: {name: {{ include "paguro.tokenSecretName" . }}, key: token}}
-          securityContext: {privileged: true}
+              valueFrom: {secretKeyRef: {name: {{ include "paguro.tokenSecretName" $ }}, key: token}}
+          securityContext:
+            {{- toYaml $v.securityContext | nindent 12 }}
           ports:
-            - {name: transfer, containerPort: {{ .Values.agent.ports.transfer }}}
-            - {name: metrics, containerPort: {{ .Values.agent.ports.metrics }}}
+            - {name: transfer, containerPort: {{ $.Values.agent.ports.transfer }}}
+            - {name: metrics, containerPort: {{ $.Values.agent.ports.metrics }}}
           readinessProbe:
-            httpGet: {path: /readyz, port: {{ .Values.agent.ports.health }}}
+            httpGet: {path: /readyz, port: {{ $.Values.agent.ports.health }}}
             periodSeconds: 10
           livenessProbe:
-            httpGet: {path: /healthz, port: {{ .Values.agent.ports.health }}}
+            httpGet: {path: /healthz, port: {{ $.Values.agent.ports.health }}}
             periodSeconds: 20
           resources:
-            {{- toYaml .Values.agent.resources | nindent 12 }}
+            {{- toYaml $.Values.agent.resources | nindent 12 }}
           volumeMounts:
             # Received checkpoints – same path as on the host, because
             # paguro-runc (on the host) reads them there.
-            - {name: state, mountPath: {{ .Values.agent.stateDir }}}
-            - {name: run, mountPath: {{ .Values.agent.runDir }}}
+            - {name: state, mountPath: {{ $.Values.agent.stateDir }}}
+            - {name: run, mountPath: {{ $.Values.agent.runDir }}}
             {{- if $transferTLS }}
             # The agents' CA; each agent's own certificate comes from a
             # CertificateSigningRequest (signer paguro.dev/agent).
             - {name: transfer-ca, mountPath: /etc/paguro/transfer-ca, readOnly: true}
             {{- end }}
-            {{- if dig "enabled" true (.Values.phantom | default dict) }}
+            {{- if dig "enabled" true ($.Values.phantom | default dict) }}
             # Phantom mode: pinned eBPF programs and maps survive agent restarts.
             - {name: bpffs, mountPath: /sys/fs/bpf, mountPropagation: HostToContainer}
             {{- end }}
@@ -269,14 +317,14 @@ spec:
             # Optional: Cilium agent API for the fast sticky-IP hand-over
             - {name: cilium-run, mountPath: /var/run/cilium}
             {{- end }}
-            {{- if dig "enabled" true (.Values.commitGate | default dict) }}
+            {{- if dig "enabled" true ($.Values.commitGate | default dict) }}
             # Commit gate (DRA driver): kubelet's plugin registry and the
             # driver's socket directory, at kubelet's own paths.
-            - {name: kubelet-registry, mountPath: {{ include "paguro.kubeletDir" . }}/plugins_registry}
-            - {name: kubelet-plugins, mountPath: {{ include "paguro.kubeletDir" . }}/plugins}
+            - {name: kubelet-registry, mountPath: {{ include "paguro.kubeletDir" $ }}/plugins_registry}
+            - {name: kubelet-plugins, mountPath: {{ include "paguro.kubeletDir" $ }}/plugins}
             {{- end }}
       volumes:
-        {{- if .Values.nodeInstaller.enabled }}
+        {{- if $.Values.nodeInstaller.enabled }}
         - name: host-root
           hostPath: {path: /, type: Directory}
         - name: stage
@@ -286,9 +334,9 @@ spec:
           hostPath: {path: /usr/local/bin, type: Directory}
         {{- end }}
         - name: state
-          hostPath: {path: {{ .Values.agent.stateDir }}, type: DirectoryOrCreate}
+          hostPath: {path: {{ $.Values.agent.stateDir }}, type: DirectoryOrCreate}
         - name: run
-          hostPath: {path: {{ .Values.agent.runDir }}, type: DirectoryOrCreate}
+          hostPath: {path: {{ $.Values.agent.runDir }}, type: DirectoryOrCreate}
         {{- if $transferTLS }}
         # optional: on a fresh install the controller creates the ConfigMap
         # after the agents started; kubelet fills the volume on its next
@@ -296,17 +344,18 @@ spec:
         - name: transfer-ca
           configMap: {name: paguro-agent-ca, optional: true}
         {{- end }}
-        {{- if dig "enabled" true (.Values.phantom | default dict) }}
+        {{- if dig "enabled" true ($.Values.phantom | default dict) }}
         - name: bpffs
           hostPath: {path: /sys/fs/bpf, type: DirectoryOrCreate}
         {{- end }}
         {{- if $cilium }}
         - name: cilium-run
-          hostPath: {path: {{ .Values.cni.ciliumSocketDir }}, type: DirectoryOrCreate}
+          hostPath: {path: {{ $.Values.cni.ciliumSocketDir }}, type: DirectoryOrCreate}
         {{- end }}
-        {{- if dig "enabled" true (.Values.commitGate | default dict) }}
+        {{- if dig "enabled" true ($.Values.commitGate | default dict) }}
         - name: kubelet-registry
-          hostPath: {path: {{ include "paguro.kubeletDir" . }}/plugins_registry, type: DirectoryOrCreate}
+          hostPath: {path: {{ include "paguro.kubeletDir" $ }}/plugins_registry, type: DirectoryOrCreate}
         - name: kubelet-plugins
-          hostPath: {path: {{ include "paguro.kubeletDir" . }}/plugins, type: DirectoryOrCreate}
+          hostPath: {path: {{ include "paguro.kubeletDir" $ }}/plugins, type: DirectoryOrCreate}
         {{- end }}
+{{- end }}
