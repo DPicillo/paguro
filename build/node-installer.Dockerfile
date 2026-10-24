@@ -24,10 +24,15 @@ ARG DEBIAN_FRONTEND=noninteractive
 # gnutls (page-server TLS) and libdrm (amdgpu plugin) are deliberately left
 # out: Paguro does not use them and every extra library is one more thing in
 # the bundle. libnftables-dev is mandatory (network-lock nftables).
+# libselinux-dev is mandatory on SELinux nodes whose runtime labels
+# containers: CRIU labels its parasite's socket with the dumped process's
+# context (without that the dump is denied) and restores processes and
+# mounts with the new container's labels (--lsm-profile, --lsm-mount-context).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates git gcc make pkg-config python3 python3-protobuf python3-yaml \
       libprotobuf-dev libprotobuf-c-dev protobuf-c-compiler protobuf-compiler \
       libcap-dev libnl-3-dev libnet1-dev libnftables-dev libbsd-dev uuid-dev \
+      libselinux1-dev \
       nftables patchelf file \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 --branch v${CRIU_VERSION} https://github.com/checkpoint-restore/criu.git /src/criu

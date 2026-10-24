@@ -25,6 +25,7 @@ import (
 	"paguro.dev/paguro/internal/criulog"
 	"paguro.dev/paguro/internal/layout"
 	"paguro.dev/paguro/internal/ocispec"
+	"paguro.dev/paguro/internal/selinuxlabel"
 	"paguro.dev/paguro/internal/shield"
 	"paguro.dev/paguro/pkg/names"
 )
@@ -80,7 +81,8 @@ func restoreContainer(inv invocation, spec *ocispec.Spec, uid string) int {
 	}
 	work := filepath.Join(r.dir, "work-"+inv.id)
 	_ = os.MkdirAll(work, 0o700)
-	rargs := restoreArgs(inv.cmdArgs, cm.Opts, r.finalDir(), work)
+	r.labelWorkDir(work)
+	rargs := append(restoreArgs(inv.cmdArgs, cm.Opts, r.finalDir(), work), lsmArgs(r.spec)...)
 	lazyUnit := ""
 	if cm.LazyPages {
 		lazyUnit = r.startLazy(work)
@@ -122,7 +124,8 @@ func (r *restorer) restoreEagerly(opts layout.DumpOptions, lazyErr error) error 
 	work := filepath.Join(r.dir, "work-"+r.inv.id+"-eager")
 	_ = os.RemoveAll(work)
 	_ = os.MkdirAll(work, 0o700)
-	if err := r.runRestore(restoreArgs(r.inv.cmdArgs, opts, r.finalDir(), work), work, ""); err != nil {
+	r.labelWorkDir(work)
+	if err := r.runRestore(append(restoreArgs(r.inv.cmdArgs, opts, r.finalDir(), work), lsmArgs(r.spec)...), work, ""); err != nil {
 		return fmt.Errorf("lazy: %v; eager: %w", lazyErr, err)
 	}
 	logf("container %s: restored eagerly after the failed lazy restore", r.name)
@@ -294,6 +297,40 @@ func (r *restorer) holdUDPServers(ports []uint16) {
 		return
 	}
 	logf("container %s: UDP servers on %v answer only peers that wrote first, for %s", r.name, ports, shield.UDPHoldWindow)
+}
+
+// labelWorkDir gives CRIU's work directory and restore log the new
+// container's file label where the runtime labels containers: the
+// restorer logs from inside the restored processes
+// (selinuxlabel.PrepareWorkDir).
+func (r *restorer) labelWorkDir(work string) {
+	if r.spec == nil {
+		return
+	}
+	_, mount := r.spec.SELinuxLabels()
+	if err := selinuxlabel.PrepareWorkDir(work, mount, "restore.log"); err != nil {
+		logf("container %s: SELinux label of the work directory: %v", r.name, err)
+	}
+}
+
+// lsmArgs gives the restored processes and mounts the SELinux labels of the
+// container being created, not those in the checkpoint: the runtime gives
+// every pod its own categories (container_t:s0:c12,c345), and the source's
+// would lock the restored process out of its new sandbox's mounts. Nothing
+// where the runtime labels nothing.
+func lsmArgs(spec *ocispec.Spec) []string {
+	if spec == nil {
+		return nil
+	}
+	var args []string
+	process, mount := spec.SELinuxLabels()
+	if process != "" {
+		args = append(args, "--lsm-profile", "selinux:"+process)
+	}
+	if mount != "" {
+		args = append(args, "--lsm-mount-context", mount)
+	}
+	return args
 }
 
 // restoreArgs translates the create call's arguments into runc restore's.

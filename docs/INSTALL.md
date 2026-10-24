@@ -48,6 +48,7 @@ you built yourself ([below](#building-and-publishing-the-images)).
 | runc | >= 1.2 | installer (hard) | |
 | CRIU | >= 4.0 with nftables | installer | ships with the installer (4.2.1) if the host has nothing usable |
 | `nsenter`, `ip` on the host | required | installer (hard) | util-linux, iproute2 (present on every common distribution) |
+| SELinux | enforcing, permissive or off | – | also where the runtime labels every pod with categories of its own; see [SELinux](#selinux) |
 | Architecture | x86_64 | installer | **arm64: not yet.** The images are built for amd64 only, and CRIU has no pre-copy on arm64 (no soft-dirty tracking), so the freeze would last for the whole memory dump |
 | Kubernetes | >= 1.28 | Helm | installed and checked on 1.28–1.37 (kind), migrations run on 1.37; the admission policies for the agents need 1.30 (skipped before), the commit gate 1.34 |
 | Pod Security | namespace `privileged` | – | the agent runs privileged with hostPID/hostNetwork |
@@ -66,6 +67,29 @@ that change over time (autoscaling across instance families), set a fixed
 level such as `cpuBaseline: x86-64-v3`. Code that detects CPU features on its
 own (Node.js/V8, Rust, numpy) is not covered; see
 [ARCHITECTURE.md](ARCHITECTURE.md), "Different CPUs".
+
+### SELinux
+
+SELinux restricts pods only where the container runtime labels them:
+containerd with `enable_selinux = true` in its CRI plugin and the
+`container-selinux` policy (RHEL and its rebuilds, Bottlerocket). Every pod
+then runs as `container_t` with MCS categories of its own
+(`container_t:s0:c12,c345`) and may only use files that carry them. Paguro
+moves such pods with their new pod's labels: the restored processes and
+mounts get the replacement's labels, files restored into its volumes the
+volume's label on the target node, and CRIU's work directories and logs
+the container's file label (CRIU's parasite and restorer write to them
+from inside the container). The CRIU in the node installer is built with
+libselinux, which it needs to label its parasite's socket.
+
+Tested on Amazon EKS 1.37 with Amazon Linux 2023 nodes (2026-10-24): SELinux
+permissive (the AMI's default), enforcing with containerd labelling nothing
+(the AMI's containerd configuration), and enforcing with containerd
+labelling every pod – each migration kept the pod's memory, its emptyDir
+and its root filesystem, each replacement ran with categories of its own,
+and the hosts logged no denial. Keep the nodes a pod can move between
+alike: a migration from a node whose runtime labels pods to one whose
+runtime does not restores the processes with their old labels.
 
 ## Building and publishing the images
 

@@ -112,6 +112,30 @@ func TestRestoreArgs(t *testing.T) {
 	}
 }
 
+// The restored container gets the SELinux labels of the container being
+// created (its own categories), and nothing where the runtime labels
+// nothing.
+func TestLSMArgs(t *testing.T) {
+	bundle := t.TempDir()
+	cfg := `{"process": {"selinuxLabel": "system_u:system_r:container_t:s0:c4,c7"},
+		"linux": {"mountLabel": "system_u:object_r:container_file_t:s0:c4,c7"}}`
+	if err := os.WriteFile(filepath.Join(bundle, "config.json"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := ocispec.Load(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--lsm-profile", "selinux:system_u:system_r:container_t:s0:c4,c7",
+		"--lsm-mount-context", "system_u:object_r:container_file_t:s0:c4,c7"}
+	if got := lsmArgs(spec); !slices.Equal(got, want) {
+		t.Fatalf("lsmArgs:\n got %v\nwant %v", got, want)
+	}
+	if got := lsmArgs(&ocispec.Spec{}); got != nil {
+		t.Fatalf("no labels: %v", got)
+	}
+}
+
 // An emptyDir sent as a base during pre-copy and a delta in the freeze ends
 // up in the new pod's emptyDir as it was at the freeze.
 func TestApplyEmptyDirBaseAndDelta(t *testing.T) {

@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"paguro.dev/paguro/internal/criulog"
+	"paguro.dev/paguro/internal/ocispec"
+	"paguro.dev/paguro/internal/selinuxlabel"
 )
 
 // RuncState is the output of "runc state".
@@ -37,6 +39,22 @@ func (h *Host) State(ctx context.Context, id string) (*RuncState, error) {
 	}
 	st := &RuncState{}
 	return st, json.Unmarshal(out, st)
+}
+
+// labelWorkDir gives CRIU's work directory and its log the container's file
+// label where the runtime labels containers (selinuxlabel.PrepareWorkDir):
+// CRIU's parasite logs from inside the container.
+func (h *Host) labelWorkDir(ctx context.Context, id, dir string) error {
+	st, err := h.State(ctx, id)
+	if err != nil || st.Bundle == "" {
+		return nil // the dump reports what is wrong with the container
+	}
+	spec, err := ocispec.Load(h.Path(st.Bundle))
+	if err != nil {
+		return nil
+	}
+	_, mount := spec.SELinuxLabels()
+	return selinuxlabel.PrepareWorkDir(h.Path(dir), mount, "dump.log")
 }
 
 // DumpKind distinguishes pre-copy rounds from the final dump.
@@ -87,6 +105,9 @@ func (h *Host) Dump(ctx context.Context, r DumpRequest) (DumpResult, error) {
 	}
 	if err := os.MkdirAll(h.Path(r.WorkDir), 0o700); err != nil {
 		return DumpResult{}, err
+	}
+	if err := h.labelWorkDir(ctx, r.ContainerID, r.WorkDir); err != nil {
+		return DumpResult{}, fmt.Errorf("SELinux label of the work directory: %w", err)
 	}
 	args := []string{"checkpoint", "--image-path", r.ImageDir, "--work-path", r.WorkDir, "--manage-cgroups-mode", "soft"}
 	if r.ParentDir != "" {

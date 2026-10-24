@@ -41,14 +41,16 @@ type Spec struct {
 		Readonly bool   `json:"readonly,omitempty"`
 	} `json:"root,omitempty"`
 	Process *struct {
-		Terminal bool     `json:"terminal,omitempty"`
-		Args     []string `json:"args,omitempty"`
+		Terminal     bool     `json:"terminal,omitempty"`
+		Args         []string `json:"args,omitempty"`
+		SelinuxLabel string   `json:"selinuxLabel,omitempty"`
 	} `json:"process,omitempty"`
 	Mounts      []Mount           `json:"mounts,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty"`
 	Linux       *struct {
 		Namespaces  []Namespace `json:"namespaces,omitempty"`
 		CgroupsPath string      `json:"cgroupsPath,omitempty"`
+		MountLabel  string      `json:"mountLabel,omitempty"`
 	} `json:"linux,omitempty"`
 
 	bundle string
@@ -68,6 +70,19 @@ func Load(bundle string) (*Spec, error) {
 		s.Annotations = map[string]string{}
 	}
 	return s, nil
+}
+
+// SELinuxLabels returns the SELinux labels the runtime gives this container
+// – its processes' and its mounts' ("" where the runtime labels nothing,
+// e.g. containerd without enable_selinux).
+func (s *Spec) SELinuxLabels() (process, mount string) {
+	if s.Process != nil {
+		process = s.Process.SelinuxLabel
+	}
+	if s.Linux != nil {
+		mount = s.Linux.MountLabel
+	}
+	return process, mount
 }
 
 // RootfsPath returns the absolute path of the root filesystem.

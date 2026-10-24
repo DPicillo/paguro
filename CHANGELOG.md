@@ -4,6 +4,24 @@ All notable changes to Paguro. Versions follow [Semantic
 Versioning](https://semver.org); before 1.0 a minor version may change the
 API (`paguro.dev/v1alpha1`) and the chart's values.
 
+## Unreleased
+
+Added:
+
+- SELinux on nodes whose container runtime labels every pod with
+  categories of its own (containerd with `enable_selinux = true` and
+  `container-selinux`, as on RHEL and Bottlerocket). Before, the first
+  pre-dump was denied – CRIU, built without libselinux, could not label
+  its parasite's socket – and the migration rolled back. Now CRIU is built
+  with libselinux; its work directories and logs carry the container's
+  file label; restored processes and mounts get the replacement's labels
+  (`--lsm-profile`, `--lsm-mount-context`); files restored into volumes
+  take the volume's label on the target node instead of the source's.
+  Tested on EKS 1.37, Amazon Linux 2023, SELinux enforcing: freeze
+  381/408 ms, the replacement with categories of its own, no denial.
+  Enforcing without labelling (the AMI's containerd configuration) and
+  permissive (its default) worked before and still do.
+
 ## v0.1.2 – 2026-10-10
 
 Fixed:

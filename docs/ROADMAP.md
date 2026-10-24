@@ -33,8 +33,10 @@ welcome as [issues](https://github.com/DPicillo/paguro/issues).
    (AWS Fault Injection Service).
 2. **GKE and AKS** (Dataplane V2, Container-Optimized OS; Azure CNI):
    install, the regression runs, game servers, spot. On EKS: GPU nodes.
-3. **Bottlerocket and EKS Auto Mode.** The kernel has everything CRIU
-   needs, but the node installer stops: no `nsenter` and `ip` on the host,
+3. **Bottlerocket and EKS Auto Mode.** SELinux is solved (2026-10-24,
+   INSTALL.md "SELinux"): pods labelled with categories of their own move
+   on enforcing nodes. The kernel has everything CRIU needs, but the node
+   installer stops: no `nsenter` and `ip` on the host,
    runc under Bottlerocket's own path, a read-only root, a containerd
    configuration rendered from Bottlerocket's settings. Needed: both tools
    in the bundle, the bundle under a writable path, the runtime handler

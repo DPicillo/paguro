@@ -31,6 +31,8 @@ import (
 
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"golang.org/x/sys/unix"
+
+	"paguro.dev/paguro/internal/selinuxlabel"
 )
 
 const (
@@ -329,7 +331,7 @@ type UnpackOptions struct {
 
 // Unpack applies the tar stream r under root.
 func Unpack(r io.Reader, root string, opt UnpackOptions) (Stats, error) {
-	u := &unpacker{tr: tar.NewReader(r), root: root, opt: opt}
+	u := &unpacker{tr: tar.NewReader(r), root: root, opt: opt, label: selinuxlabel.Of(root)}
 	for {
 		hdr, err := u.tr.Next()
 		if err == io.EOF {
@@ -357,6 +359,9 @@ type unpacker struct {
 	opt  UnpackOptions
 	st   Stats
 	dirs []dirTime
+	// label is root's SELinux label ("" without SELinux): what the
+	// runtime gave the volume on this node, for every object created in it.
+	label string
 }
 
 type dirTime struct {
@@ -486,10 +491,14 @@ func (u *unpacker) attributes(hdr *tar.Header, target string, mode os.FileMode) 
 		return err
 	}
 	for k, v := range hdr.PAXRecords {
-		if name, ok := strings.CutPrefix(k, "SCHILY.xattr."); ok {
+		if name, ok := strings.CutPrefix(k, "SCHILY.xattr."); ok && name != selinuxlabel.Xattr {
 			_ = unix.Lsetxattr(target, name, []byte(v), 0)
 		}
 	}
+	// Never the source's SELinux label: it carries the source pod's
+	// categories (container_file_t:s0:c12,c345), which the restored pod –
+	// with categories of its own – may not use. The volume's label here.
+	_ = selinuxlabel.Set(target, u.label)
 	if hdr.Typeflag != tar.TypeSymlink {
 		// chown clears setuid/setgid – set the mode again afterwards.
 		if hdr.Typeflag != tar.TypeLink {
