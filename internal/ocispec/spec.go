@@ -18,6 +18,7 @@ const (
 	AnnContainerType = "io.kubernetes.cri.container-type" // "sandbox" | "container"
 	AnnContainerName = "io.kubernetes.cri.container-name"
 	AnnSandboxUID    = "io.kubernetes.cri.sandbox-uid"
+	AnnSandboxNS     = "io.kubernetes.cri.sandbox-namespace"
 	AnnSandboxID     = "io.kubernetes.cri.sandbox-id"
 	TypeSandbox      = "sandbox"
 	TypeContainer    = "container"

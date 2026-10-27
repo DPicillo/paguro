@@ -48,6 +48,11 @@ type PodMutator struct {
 	// CPUBaseline returns the CPU features a new migratable pod's runtimes
 	// may use (comma-separated; "" for none). Nil: no baseline.
 	CPUBaseline func(ctx context.Context) (string, error)
+	// ControllerUser is the controller's service account
+	// (system:serviceaccount:<ns>:paguro-controller): the only one that
+	// creates pods which already carry a restore annotation (bare-pod
+	// replacements). "" accepts any (tests).
+	ControllerUser string
 }
 
 var _ admission.Handler = (*PodMutator)(nil)
@@ -67,8 +72,13 @@ func (m *PodMutator) Handle(ctx context.Context, req admission.Request) admissio
 	}
 	dryRun := req.DryRun != nil && *req.DryRun
 
-	// A bare-pod replacement created by the controller itself is already done.
+	// A bare-pod replacement created by the controller itself is already
+	// done. Anyone else's pod must not claim a migration's checkpoint
+	// (paguro-runc also checks the UID and the namespace on the node).
 	if pod.Annotations[v1alpha1.AnnotationRestoreID] != "" {
+		if m.ControllerUser != "" && req.UserInfo.Username != m.ControllerUser {
+			return admission.Denied(fmt.Sprintf("paguro: annotation %s is set by Paguro's controller only", v1alpha1.AnnotationRestoreID))
+		}
 		return admission.Allowed("already a restore target")
 	}
 	if resp, intercepted := m.interceptReplacement(ctx, req, pod, dryRun, log); intercepted {

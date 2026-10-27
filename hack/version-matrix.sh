@@ -62,6 +62,18 @@ for v in $versions; do
     check "admission policies ($vaps)" test "$vaps" -ge 6
     check "policy type checking" sh -c '! kubectl get validatingadmissionpolicies -o jsonpath="{range .items[*]}{.status.typeChecking}{end}" | grep -q expressionWarnings' ||
       kubectl get validatingadmissionpolicies -o jsonpath='{range .items[*]}{.metadata.name}: {.status.typeChecking.expressionWarnings[*].warning}{"\n"}{end}' | grep -v ': $' | cut -c1-300 | sed 's/^/       /'
+    # The controller may label a node paguro.dev/os=bottlerocket and change
+    # nothing else on it (controller-policy.yaml).
+    node=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+    as=system:serviceaccount:paguro-system:paguro-controller
+    check "controller labels a node paguro.dev/os" kubectl label node "$node" paguro.dev/os=bottlerocket --overwrite --as=$as
+    check "controller changes nothing else on a node" sh -c "! kubectl label node $node paguro.dev/x=1 --as=$as"
+    kubectl label node "$node" paguro.dev/os- paguro.dev/x- >/dev/null 2>&1
+    # Nobody adds paguro.dev/restore-id to an existing pod
+    # (restore-policy.yaml); the webhook refuses it on new pods of anyone
+    # but the controller.
+    check "restore-id cannot be added later" sh -c '! kubectl -n pm-test annotate pod '"${web:-web1}"' paguro.dev/restore-id=0d4c7f6e-6a7b-4c3d-9e8f-1a2b3c4d5e6f'
+    check "restore-id refused on a user's new pod" sh -c '! kubectl -n pm-test run evil --image=registry.k8s.io/pause:3.10 --annotations=paguro.dev/restore-id=0d4c7f6e-6a7b-4c3d-9e8f-1a2b3c4d5e6f'
   else
     echo "  --   admission policies: not before 1.30 ($vaps installed)"
   fi

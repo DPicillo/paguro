@@ -289,3 +289,35 @@ func TestAppendBundlePath(t *testing.T) {
 		t.Fatalf("PATH %q", got)
 	}
 }
+
+// A pod's restore annotation is the pod's own – whoever creates pods sets
+// it. It must never steer paguro-runc to a path of the pod's choosing, nor
+// to another namespace's checkpoint.
+func TestRestoreAllowed(t *testing.T) {
+	layout.StateDir = t.TempDir()
+	podIn := func(ns string) *ocispec.Spec {
+		return &ocispec.Spec{Annotations: map[string]string{ocispec.AnnSandboxNS: ns}}
+	}
+	for _, uid := range []string{"../../../var/lib/kubelet/pods/x/volumes", "mig-1", "/etc", "..",
+		"0d4c7f6e-6a7b-4c3d-9e8f-1a2b3c4d5e6f/..", "0D4C7F6E-6A7B-4C3D-9E8F-1A2B3C4D5E6F"} {
+		if err := restoreAllowed(uid, podIn("shop")); err == nil {
+			t.Errorf("uid %q accepted", uid)
+		}
+	}
+	uid := "0d4c7f6e-6a7b-4c3d-9e8f-1a2b3c4d5e6f"
+	if err := restoreAllowed(uid, podIn("shop")); err != nil {
+		t.Fatalf("nothing pending on this node: a normal start, got %v", err)
+	}
+	if err := layout.CreateRoot(uid, "shop"); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreAllowed(uid, podIn("shop")); err != nil {
+		t.Fatalf("the migration's own namespace: %v", err)
+	}
+	if err := restoreAllowed(uid, podIn("evil")); err == nil {
+		t.Fatal("a pod of another namespace may claim the checkpoint")
+	}
+	if err := restoreAllowed(uid, podIn("")); err == nil {
+		t.Fatal("a pod without namespace annotation may claim the checkpoint")
+	}
+}

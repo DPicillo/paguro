@@ -289,14 +289,30 @@ preflight() {
 # The containerd that serves kubelet. A node may run more than one:
 # Bottlerocket runs host-containerd (host-containerd.service) for its own
 # host containers next to kubelet's (containerd.service). The unit
-# containerd.service wins; otherwise the first one (k3s and RKE2 run a
-# single containerd inside their own service).
+# containerd.service wins; otherwise another system unit's containerd (k3s
+# and RKE2 run a single containerd inside their own service).
+#
+# Pods share the host's PID namespace view here (hostPID) and may name a
+# process "containerd": the installer reads PATH, config and binary of the
+# process it picks and runs programs from them as root. So a candidate
+# must be a system service – its cgroup a *.service outside kubepods – and
+# see the host's root file system; anything else is never picked.
+PROC=${PAGURO_PROC:-/proc}
+trusted_containerd() { # pid
+	local d=$PROC/$1 cg
+	[ "$(cat "$d/comm" 2>/dev/null)" = containerd ] || return 1
+	cg=$(sed -n 's/^0:://p' "$d/cgroup" 2>/dev/null)
+	case "$cg" in *kubepods*) return 1 ;; *.service) ;; *) return 1 ;; esac
+	[ "$(stat -L -c %d:%i "$d/root/" 2>/dev/null)" = "$(stat -L -c %d:%i "$PROC/1/root/" 2>/dev/null)" ]
+}
+
 find_containerd_pid() {
-	local d first=""
-	for d in /proc/[0-9]*; do
-		[ "$(cat "$d/comm" 2>/dev/null)" = containerd ] || continue
-		if grep -qE '^0::.*/containerd\.service$' "$d/cgroup" 2>/dev/null; then basename "$d"; return 0; fi
-		[ -n "$first" ] || first=$(basename "$d")
+	local d pid first=""
+	for d in "$PROC"/[0-9]*; do
+		pid=${d##*/}
+		trusted_containerd "$pid" || continue
+		if grep -qE '^0::.*/containerd\.service$' "$d/cgroup" 2>/dev/null; then echo "$pid"; return 0; fi
+		[ -n "$first" ] || first=$pid
 	done
 	[ -n "$first" ] && { echo "$first"; return 0; }
 	return 1
@@ -309,14 +325,14 @@ discover_containerd() {
 	CTD_PATH=""
 	local pid
 	if pid=$(find_containerd_pid); then
-		[ -n "$CTD_BIN" ] || CTD_BIN=$(readlink "/proc/$pid/exe" | sed 's/ (deleted)$//')
+		[ -n "$CTD_BIN" ] || CTD_BIN=$(readlink "$PROC/$pid/exe" | sed 's/ (deleted)$//')
 		if [ -z "$CTD_CFG" ]; then
 			# --config X | --config=X | -c X
-			CTD_CFG=$(tr '\0' '\n' < "/proc/$pid/cmdline" | awk '
+			CTD_CFG=$(tr '\0' '\n' < "$PROC/$pid/cmdline" | awk '
 				prev { print; exit } /^(--config|-c)$/ { prev=1 } /^--config=/ { sub(/^--config=/, ""); print; exit }')
 		fi
-		[ -n "$CTD_UNIT" ] || CTD_UNIT=$(awk -F/ '/^0::/ { for (i = NF; i > 0; i--) if ($i ~ /\.service$/) { print $i; exit } }' "/proc/$pid/cgroup")
-		CTD_PATH=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n 's/^PATH=//p')
+		[ -n "$CTD_UNIT" ] || CTD_UNIT=$(awk -F/ '/^0::/ { for (i = NF; i > 0; i--) if ($i ~ /\.service$/) { print $i; exit } }' "$PROC/$pid/cgroup")
+		CTD_PATH=$(tr '\0' '\n' < "$PROC/$pid/environ" 2>/dev/null | sed -n 's/^PATH=//p')
 	fi
 	[ -n "$CTD_BIN" ] || CTD_BIN=$(host_which containerd)
 	[ -n "$CTD_BIN" ] || fatal "containerd not found (no running process, not in host PATH) – Paguro needs containerd >= 2.0"
@@ -855,4 +871,5 @@ main() {
 	finish
 }
 
-main
+# PAGURO_INSTALLER_LIB=1: only define the functions (tests).
+[ "${PAGURO_INSTALLER_LIB:-}" = 1 ] || main

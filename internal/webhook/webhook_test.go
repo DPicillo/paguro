@@ -630,3 +630,24 @@ func TestRestoreTargetGetsGateClaim(t *testing.T) {
 		t.Fatalf("claims %+v", pod.Spec.ResourceClaims)
 	}
 }
+
+// Only Paguro's controller creates pods that already carry a restore
+// annotation; anyone else's would claim a migration's checkpoint.
+func TestHandlerRestoreAnnotationOnlyFromController(t *testing.T) {
+	h := &PodMutator{ControllerUser: "system:serviceaccount:paguro-system:paguro-controller"}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "shop",
+		Annotations: map[string]string{v1alpha1.AnnotationRestoreID: "0d4c7f6e-6a7b-4c3d-9e8f-1a2b3c4d5e6f"}}}
+	req := request(t, pod, false)
+	req.UserInfo.Username = "alice"
+	if resp := h.Handle(context.Background(), req); resp.Allowed {
+		t.Fatal("a user's pod with a restore annotation was admitted")
+	}
+	req.UserInfo.Username = "system:serviceaccount:kube-system:replicaset-controller"
+	if resp := h.Handle(context.Background(), req); resp.Allowed {
+		t.Fatal("a ReplicaSet's pod with a restore annotation in its template was admitted")
+	}
+	req.UserInfo.Username = h.ControllerUser
+	if resp := h.Handle(context.Background(), req); !resp.Allowed {
+		t.Fatalf("the controller's bare-pod replacement was denied: %v", resp.Result)
+	}
+}

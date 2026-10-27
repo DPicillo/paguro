@@ -52,3 +52,32 @@ func TestLatestWrite(t *testing.T) {
 		t.Fatalf("LatestWrite = %v, want %v", got, old)
 	}
 }
+
+func TestValidUIDAndCreateRoot(t *testing.T) {
+	StateDir = t.TempDir()
+	for uid, ok := range map[string]bool{
+		"0d4c7f6e-6a7b-4c3d-9e8f-1a2b3c4d5e6f": true,
+		"..":                                   false,
+		"../0d4c7f6e-6a7b-4c3d-9e8f-1a2b3c4d5e6f": false,
+		"0d4c7f6e-6a7b-4c3d-9e8f-1a2b3c4d5e6f/x":  false,
+		"mig-1":                                   false,
+		"":                                        false,
+	} {
+		if ValidUID(uid) != ok {
+			t.Errorf("ValidUID(%q) = %v", uid, !ok)
+		}
+	}
+	if err := CreateRoot("../x", "shop"); err == nil {
+		t.Fatal("CreateRoot accepted a path")
+	}
+	uid := "0d4c7f6e-6a7b-4c3d-9e8f-1a2b3c4d5e6f"
+	if err := CreateRoot(uid, "shop"); err != nil {
+		t.Fatal(err)
+	}
+	if got := Namespace(uid); got != "shop" {
+		t.Fatalf("namespace %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(Root(uid), "NAMESPACE.tmp")); !os.IsNotExist(err) {
+		t.Fatal("temporary file left")
+	}
+}

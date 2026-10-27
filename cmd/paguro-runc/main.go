@@ -24,6 +24,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -206,6 +207,14 @@ func create(inv invocation) (int, bool) {
 	if uid == "" {
 		return 0, false
 	}
+	// The annotation is the pod's – whoever creates pods can set it. It
+	// becomes a path only as a migration UID, and a pending checkpoint is
+	// restored only into a pod of its migration's namespace.
+	if err := restoreAllowed(uid, spec); err != nil {
+		logf("%s %s: refused: %v", spec.Ann(ocispec.AnnContainerType), inv.id, err)
+		fmt.Fprintf(os.Stderr, "paguro-runc: %v; refusing to create this container\n", err)
+		return 1, true
+	}
 
 	switch spec.Ann(ocispec.AnnContainerType) {
 	case ocispec.TypeSandbox:
@@ -243,6 +252,28 @@ func create(inv invocation) (int, bool) {
 		return restoreContainer(inv, spec, uid), true
 	}
 	return 0, false
+}
+
+// restoreAllowed checks a pod's restore annotation: a migration UID, and –
+// if that migration's checkpoint waits on this node – the pod's namespace
+// is the migration's (recorded by the target agent; it may lag the
+// directory by a moment).
+func restoreAllowed(uid string, spec *ocispec.Spec) error {
+	if !layout.ValidUID(uid) {
+		return fmt.Errorf("annotation %s=%q is not a migration UID", names.AnnotationRestoreID, uid)
+	}
+	if !layout.RestorePending(uid) {
+		return nil // nothing to restore: a normal start
+	}
+	ns := layout.Namespace(uid)
+	for deadline := time.Now().Add(3 * time.Second); ns == "" && time.Now().Before(deadline); {
+		time.Sleep(50 * time.Millisecond)
+		ns = layout.Namespace(uid)
+	}
+	if pod := spec.Ann(ocispec.AnnSandboxNS); ns == "" || pod != ns {
+		return fmt.Errorf("migration %s belongs to namespace %q, the pod is in %q", uid, ns, pod)
+	}
+	return nil
 }
 
 // appendBundlePath puts the node installer's programs after the PATH that

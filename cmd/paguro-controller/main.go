@@ -204,7 +204,8 @@ func setupWebhooks(ctx context.Context, cfg *rest.Config, mgr ctrl.Manager, o op
 	if err != nil {
 		return nil, nil, err
 	}
-	mutator := &webhook.PodMutator{Registry: registry, ClusterAdapter: adapter, CPUBaseline: baseline}
+	mutator := &webhook.PodMutator{Registry: registry, ClusterAdapter: adapter, CPUBaseline: baseline,
+		ControllerUser: "system:serviceaccount:" + o.namespace + ":paguro-controller"}
 	var pools controller.PoolRotator
 	if detected.NeedsStickyIP() {
 		if pools, err = setupStickyIPs(cfg, mgr, mutator, o.stickyCIDR); err != nil {

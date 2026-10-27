@@ -15,7 +15,7 @@ CONTAINER_TOOL  ?= docker
 
 CONTROLLER_IMAGE := $(PAGURO_REGISTRY)/paguro-controller:$(TAG)
 
-.PHONY: all test vet lint generate bpf-generate controller controller-image controller-push \
+.PHONY: all test installer-unit vet lint generate bpf-generate controller controller-image controller-push \
         kubectl-plugin ci fmt-check headers-check generate-check tools chart-docs
 
 all: vet test controller kubectl-plugin
@@ -41,7 +41,11 @@ bpf-generate:
 	  { printf '// SPDX-License-Identifier: Apache-2.0\n// Copyright (C) 2026 David Picillo\n\n' | cat - $$f > $$f.tmp && mv $$f.tmp $$f; }
 
 # Everything CI checks (.github/workflows/ci.yaml), runnable locally.
-ci: fmt-check headers-check vet lint test generate-check helm-lint
+ci: fmt-check headers-check vet lint test installer-unit generate-check helm-lint
+
+# The node installer's process discovery against fake /proc trees.
+installer-unit:
+	bash build/node-installer/test-discovery.sh
 
 # staticcheck: dead code, deprecated APIs, simplifications. Pinned, so that
 # a new release cannot fail an old commit.

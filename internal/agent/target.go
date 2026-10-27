@@ -79,7 +79,7 @@ func (j *targetJob) prepare(ctx context.Context) error {
 		}
 		j.log.Info("image pre-pulled", "image", img, "ms", ms(time.Since(start)))
 	}
-	if err := os.MkdirAll(layout.Root(string(j.m.UID)), 0o700); err != nil {
+	if err := layout.CreateRoot(string(j.m.UID), j.m.Namespace); err != nil {
 		return err
 	}
 	msg := "ready to receive"

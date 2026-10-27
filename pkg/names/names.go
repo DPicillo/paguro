@@ -175,6 +175,10 @@ const (
 	FileRootfsDiff = "rootfs-diff.tar"
 	FileMeta       = "meta.json"
 	FileSandbox    = "SANDBOX" // wrapper: sandbox ready (RFC3339Nano)
+	// FileNamespace holds the migration's namespace, written by the target
+	// agent with the directory: paguro-runc restores only into a pod of
+	// that namespace.
+	FileNamespace = "NAMESPACE"
 	// FileSandboxNetns holds the sandbox's network namespace path (host view).
 	FileSandboxNetns = "SANDBOX_NETNS"
 	DirImages        = "images" // images/<round>/, images/final/

@@ -121,6 +121,10 @@ annotations:
     - kind: changed
       description: In clusters with Bottlerocket and other nodes, pods move only between nodes of the same kind
     - kind: security
+      description: "A user who may create pods could take over a node through the annotation paguro.dev/restore-id (0.1.0–0.1.2); now a migration UID only, bound to the migration's namespace, set by the controller only"
+    - kind: security
+      description: "Node installer on hosts without containerd.service (k3s, RKE2): a pod's process named containerd is no longer taken for the node's containerd"
+    - kind: security
       description: Go 1.26.10; crictl in the node installer rebuilt with fixed net/http and golang.org/x/net
   artifacthub.io/screenshots: |
     - title: Minecraft Java Edition on Amazon EKS – the server pod is being moved from an on-demand to a spot node while the player keeps playing

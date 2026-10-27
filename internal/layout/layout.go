@@ -116,6 +116,37 @@ var StateDir = names.StateDir
 
 func Root(uid string) string { return filepath.Join(StateDir, "restore", uid) }
 
+// uidPattern is a Kubernetes UID. A restore directory is named after its
+// migration's UID; a value that comes from a pod's annotation must be one
+// before it becomes a path (no "..", no "/").
+var uidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// ValidUID reports whether uid is a Kubernetes UID.
+func ValidUID(uid string) bool { return uidPattern.MatchString(uid) }
+
+// CreateRoot creates migration uid's restore directory and records its
+// namespace in it (names.FileNamespace).
+func CreateRoot(uid, namespace string) error {
+	if !ValidUID(uid) {
+		return fmt.Errorf("invalid migration UID %q", uid)
+	}
+	if err := os.MkdirAll(Root(uid), 0o700); err != nil {
+		return err
+	}
+	p := filepath.Join(Root(uid), names.FileNamespace)
+	if err := os.WriteFile(p+".tmp", []byte(namespace), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(p+".tmp", p)
+}
+
+// Namespace is the namespace CreateRoot recorded for migration uid ("" if
+// none).
+func Namespace(uid string) string {
+	b, _ := os.ReadFile(filepath.Join(Root(uid), names.FileNamespace))
+	return string(b)
+}
+
 func ContainerDir(uid, name string) string {
 	return filepath.Join(Root(uid), "containers", name)
 }

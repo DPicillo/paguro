@@ -4,7 +4,10 @@ All notable changes to Paguro. Versions follow [Semantic
 Versioning](https://semver.org); before 1.0 a minor version may change the
 API (`paguro.dev/v1alpha1`) and the chart's values.
 
-## Unreleased
+## v0.1.3 – unreleased
+
+Bottlerocket and EKS Auto Mode with nothing to set up (beta), SELinux with
+a label per pod, and a new license: Apache-2.0.
 
 Added:
 
@@ -21,7 +24,7 @@ Added:
   381/408 ms, the replacement with categories of its own, no denial.
   Enforcing without labelling (the AMI's containerd configuration) and
   permissive (its default) worked before and still do.
-- Bottlerocket, with nothing to set up: the same `helm install`. The
+- Bottlerocket (beta), with nothing to set up: the same `helm install`. The
   controller labels Bottlerocket nodes `paguro.dev/os=bottlerocket`, and
   the chart runs the agent there as `paguro-agent-bottlerocket` with the
   SELinux type `super_t` (Bottlerocket starts privileged containers as
@@ -41,9 +44,22 @@ Added:
   EKS 1.37 with Bottlerocket 1.67.0: four migrations of a pod with state
   in memory, emptyDir and root filesystem (freeze 366–459 ms) and two of a
   JVM with JIT-compiled code, each with SELinux categories of its own on
-  the target.
-- EKS Auto Mode: its nodes are Bottlerocket, and Paguro runs there the
-  same way, nothing to set up. Three migrations, freeze 315–406 ms.
+  the target. With clients in Phantom mode (2026-10-27, EKS cluster with
+  two Bottlerocket and two AL2023 nodes): a UDP game server and a TCP
+  echo server, each moved back and forth; players through the ClusterIP
+  and a NodePort kept their sessions (36–48 of 3000 inputs lost, within
+  the freeze), no new TCP connection through the ClusterIP failed, the
+  long-lived connection survived – as on AL2023. A rebooted node gets its
+  handler again from the agent (one containerd restart) and takes and
+  gives migrations; an EBS volume moves with the pod; `helm uninstall`
+  and the documented node cleanup leave the node as it was.
+- EKS Auto Mode (beta): its nodes are Bottlerocket, and Paguro runs there
+  the same way, nothing to set up. Three migrations, freeze 315–406 ms.
+- In clusters with Bottlerocket and other nodes, pods move only between
+  nodes of the same kind: a checkpoint does not restore across them
+  (tried on EKS: CRIU fails on SELinux contexts one side does not know and
+  on the containers' mounts, and the replacement cold-starts). Placement
+  never picks such a target; an explicit target is refused.
 
 Changed:
 
@@ -53,7 +69,52 @@ Changed:
   stay under AGPL-3.0-only. The eBPF program of Phantom mode keeps
   `GPL-2.0-only OR BSD-2-Clause`, the patches to CRIU `GPL-2.0-only`.
 - The chart's controller may patch nodes – only the label `paguro.dev/os`,
-  held to that by an admission policy (`agent.restrictionPolicy.enabled`).
+  held to that by an admission policy (`agent.restrictionPolicy.enabled`;
+  checked on Kubernetes 1.30–1.37).
+- tmpfs contents in a checkpoint are plain tar instead of gzip'ed tar:
+  gzip ran inside the freeze, and Paguro compresses what it transfers
+  anyway.
+
+Fixed:
+
+- **Security: a user who may create pods could take over a node**
+  (releases 0.1.0–0.1.2). paguro-runc took the pod annotation
+  `paguro.dev/restore-id` as a directory name: with `../` in it and
+  `runtimeClassName: paguro`, a pod made paguro-runc – root on the node –
+  restore a checkpoint from a directory the pod controlled (its own
+  emptyDir), or claim another namespace's waiting checkpoint. Now the
+  annotation must be a migration UID, a waiting checkpoint is restored
+  only into a pod of the migration's namespace (recorded by the target
+  agent), the webhook admits new pods carrying the annotation only from
+  Paguro's controller, and an admission policy keeps anyone from adding
+  or changing it on an existing pod. Found in an internal review; tried
+  on EKS: the attempts are refused by the webhook, the policy and – with
+  both bypassed – by paguro-runc on the node.
+- **Security: the node installer could run a pod's program as root**
+  (releases 0.1.0–0.1.2) on
+  hosts without a `containerd.service` unit (k3s, RKE2). It took the
+  first process named `containerd` for the node's containerd and ran
+  programs from that process's PATH and binary; a pod can name a process
+  so. Only a system service (its cgroup a `*.service` outside `kubepods`)
+  that sees the host's root qualifies now. Not affected: hosts where
+  containerd runs as `containerd.service` (kubeadm, EKS AL2023,
+  Bottlerocket).
+- Known vulnerabilities: Go 1.26.10 for Paguro's binaries (GO-2026-6809
+  in `crypto/x509`); crictl in the node installer is rebuilt from its
+  v1.37.0 source with Go 1.26.10 and `golang.org/x/net` v0.60.0 – the
+  release binary carries net/http and x/net vulnerabilities its code
+  reaches (govulncheck).
+
+Known limitations:
+
+- An RWO EBS volume moves inside the freeze: measured 17–24 s on AL2023
+  and 25–45 s on Bottlerocket (detach and attach). io2 Multi-Attach
+  takes the attach out of the freeze.
+- Bottlerocket: every migration logs two expected SELinux denials –
+  CRIU's first attempt to write the pod's `clear_refs` and to map
+  executable memory as `runtime_t`, before it takes the way the policy
+  allows. Security tooling may report them.
+- Pods do not move between Bottlerocket and other nodes (above).
 
 ## v0.1.2 – 2026-10-10
 

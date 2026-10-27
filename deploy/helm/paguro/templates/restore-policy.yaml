@@ -1,0 +1,39 @@
+{{- /* paguro.dev/restore-id names the migration whose checkpoint a pod is
+restored from: Paguro sets it when the pod is created (the webhook, or the
+controller for bare pods), never later. Nobody may add, change or remove it
+on an existing pod – a pod's container restart would otherwise ask
+paguro-runc for another migration's checkpoint. paguro-runc also checks the
+UID and the namespace on the node; this policy runs in the API server and
+holds while the webhook is unreachable. Switched with the agents' policies
+(agent.restrictionPolicy.enabled). */ -}}
+{{- if and (dig "restrictionPolicy" "enabled" true .Values.agent) (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy") }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: paguro-restore-annotation
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["pods"]
+  validations:
+    - expression: >-
+        object.metadata.?annotations[?'paguro.dev/restore-id'].orValue('') ==
+        oldObject.metadata.?annotations[?'paguro.dev/restore-id'].orValue('')
+      message: "paguro.dev/restore-id is set by Paguro when the pod is created and cannot be added, changed or removed"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: paguro-restore-annotation
+  labels:
+    {{- include "paguro.labels" . | nindent 4 }}
+spec:
+  policyName: paguro-restore-annotation
+  validationActions: [Deny]
+{{- end }}
