@@ -42,9 +42,9 @@ annotations:
   # storage, …) fits live migration; skip-prediction keeps it from guessing
   # one from the keywords.
   artifacthub.io/category: skip-prediction
-  # Paguro is AGPL-3.0-only (LICENSE in this chart); third-party licenses
+  # Paguro is Apache-2.0 (LICENSE in this chart); third-party licenses
   # and the source of the shipped CRIU bundle: docs/THIRD-PARTY.md.
-  artifacthub.io/license: AGPL-3.0-only
+  artifacthub.io/license: Apache-2.0
   # Set by the release workflow from the tag (true for vX.Y.Z-rc.N).
   artifacthub.io/prerelease: "false"
   artifacthub.io/containsSecurityUpdates: "false"

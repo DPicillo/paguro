@@ -1,0 +1,13 @@
+Paguro
+Copyright 2026 David Picillo
+
+Licensed under the Apache License, Version 2.0 (LICENSE).
+
+Exceptions in this repository: the eBPF program of Phantom mode
+(internal/phantom/bpf/) is licensed GPL-2.0-only OR BSD-2-Clause; the
+patches to CRIU (build/criu-patches/) are changes to CRIU and licensed
+GPL-2.0-only, like CRIU.
+
+The node installer image ships CRIU and other GPL- and LGPL-licensed
+programs as separate programs next to Paguro. Their licenses and where
+their source code is: docs/THIRD-PARTY.md.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Per-packet overhead of the Phantom-mode datapath, end to end.
 #
 #   peer (10.251.1.10) -- router -- pod (eth0 NEW 10.251.3.20, lo OLD 10.251.2.10)

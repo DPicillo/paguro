@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """A UDP game server and player for the Phantom-mode tests (udp-rebind.sh).
 
 The server behaves like Xonotic/DarkPlaces or a RakNet server: one

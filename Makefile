@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Paguro – build and deployment.
 #
 #   make controller-image PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.0
@@ -38,7 +38,7 @@ bpf-generate:
 	  go generate ./internal/phantom/ && chown $(shell id -u):$(shell id -g) internal/phantom/phantom_bpfel.*'
 	@# bpf2go writes no license header; hack/check-headers.sh wants one.
 	@f=internal/phantom/phantom_bpfel.go; head -3 $$f | grep -q SPDX-License-Identifier || \
-	  { printf '// SPDX-License-Identifier: AGPL-3.0-only\n// Copyright (C) 2026 David Picillo\n\n' | cat - $$f > $$f.tmp && mv $$f.tmp $$f; }
+	  { printf '// SPDX-License-Identifier: Apache-2.0\n// Copyright (C) 2026 David Picillo\n\n' | cat - $$f > $$f.tmp && mv $$f.tmp $$f; }
 
 # Everything CI checks (.github/workflows/ci.yaml), runnable locally.
 ci: fmt-check headers-check vet lint test generate-check helm-lint

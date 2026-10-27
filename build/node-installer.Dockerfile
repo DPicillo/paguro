@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # paguro-node-installer: prepares a Kubernetes node for Paguro.
 # Runs as the first initContainer of the paguro-agent DaemonSet (privileged,
 # hostPID, host root at /host). See build/node-installer/install.sh.
@@ -82,7 +82,7 @@ RUN cd /src/criu && git archive --format=tar.gz --prefix=criu-${CRIU_VERSION}/ H
 
 FROM scratch AS sources
 COPY --from=sources-collect /sources/ /sources/
-COPY LICENSE docs/THIRD-PARTY.md /sources/
+COPY LICENSE NOTICE docs/THIRD-PARTY.md /sources/
 
 FROM ${UBUNTU_IMAGE} AS crictl
 ARG CRICTL_VERSION=v1.37.0
@@ -101,14 +101,14 @@ RUN apk upgrade --no-cache && apk add --no-cache bash util-linux-misc flock core
 COPY --from=criu /opt/paguro/ /opt/paguro/
 COPY --from=crictl /out/crictl /opt/paguro/bin/crictl
 COPY build/node-installer/install.sh /usr/local/bin/paguro-node-installer
-COPY LICENSE docs/THIRD-PARTY.md third_party/LICENSES.txt /licenses/
+COPY LICENSE NOTICE docs/THIRD-PARTY.md third_party/LICENSES.txt /licenses/
 COPY --from=criu /licenses/bundle/ /licenses/bundle/
 # Manifest of the bundle: the installer compares it with the copy on the host
 # and skips the file copy entirely when nothing changed (fast restarts).
 RUN chmod 0755 /usr/local/bin/paguro-node-installer && \
     echo "criu ${CRIU_VERSION}" > /opt/paguro/VERSION && \
     cd /opt/paguro && find bin lib -type f | sort | xargs sha256sum > /opt/paguro/MANIFEST
-LABEL org.opencontainers.image.licenses="AGPL-3.0-only AND GPL-2.0-only AND GPL-2.0-or-later AND LGPL-2.1-or-later AND Apache-2.0" \
+LABEL org.opencontainers.image.licenses="Apache-2.0 AND GPL-2.0-only AND GPL-2.0-or-later AND GPL-3.0-or-later AND LGPL-2.1-or-later" \
       org.opencontainers.image.title="paguro-node-installer" \
       org.opencontainers.image.description="Installs CRIU, nftables and the paguro containerd runtime handler on Kubernetes nodes"
 ENTRYPOINT ["/usr/local/bin/paguro-node-installer"]

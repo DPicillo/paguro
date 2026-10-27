@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Installs a pre-push hook that runs `make ci` (the checks of
 # .github/workflows/ci.yaml) before anything leaves this machine.
 set -euo pipefail

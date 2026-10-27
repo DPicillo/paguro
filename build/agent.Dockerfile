@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # paguro-agent + paguro-runc
 # The agent image contains nsenter (util-linux): host programs (runc, criu,
 # nft, crictl) run in the host's mount namespace so that they have exactly
@@ -16,6 +16,6 @@ FROM alpine:3.24
 # tag was built (make image-scan fails on fixable vulnerabilities).
 RUN apk upgrade --no-cache && apk add --no-cache util-linux-misc ca-certificates
 COPY --from=build /out/paguro-agent /out/paguro-runc /usr/local/bin/
-COPY LICENSE docs/THIRD-PARTY.md third_party/LICENSES.txt /licenses/
-LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
+COPY LICENSE NOTICE docs/THIRD-PARTY.md third_party/LICENSES.txt /licenses/
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 ENTRYPOINT ["/usr/local/bin/paguro-agent"]

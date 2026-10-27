@@ -47,6 +47,11 @@ Added:
 
 Changed:
 
+- **License: Apache-2.0 instead of AGPL-3.0-only** – Paguro may now be built
+  into other products, proprietary ones included, as long as the license
+  and the notices (`NOTICE`) go with it. Releases up to and including 0.1.2
+  stay under AGPL-3.0-only. The eBPF program of Phantom mode keeps
+  `GPL-2.0-only OR BSD-2-Clause`, the patches to CRIU `GPL-2.0-only`.
 - The chart's controller may patch nodes – only the label `paguro.dev/os`,
   held to that by an admission policy (`agent.restrictionPolicy.enabled`).
 

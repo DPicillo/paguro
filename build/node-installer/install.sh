@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # paguro-node-installer – prepares a Kubernetes node for Paguro.
 #
 # Runs as the first initContainer of the paguro-agent DaemonSet (privileged,

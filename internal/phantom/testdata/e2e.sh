@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # End-to-end test of the Phantom-mode datapath with a real CRIU migration.
 #
 # Uses the namespace model from topology.sh. A server process with eight

@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Fails if a source file lacks its SPDX license identifier (docs/THIRD-PARTY.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."

@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Build-time helper: turns dynamically linked binaries into a self-contained
 # bundle that runs on any glibc-based Linux host, independent of the host's
 # glibc version (Ubuntu 22.04/24.04, Amazon Linux 2023 with glibc 2.34, ...).

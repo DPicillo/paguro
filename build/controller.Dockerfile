@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # paguro-controller – the build context is the repo root:
 #   docker build -f build/controller.Dockerfile -t <registry>/paguro-controller:<tag> .
 FROM golang:1.26.9 AS build
@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=
 
 FROM gcr.io/distroless/static-debian13:nonroot
 COPY --from=build /out/paguro-controller /paguro-controller
-COPY LICENSE docs/THIRD-PARTY.md third_party/LICENSES.txt /licenses/
-LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
+COPY LICENSE NOTICE docs/THIRD-PARTY.md third_party/LICENSES.txt /licenses/
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 USER 65532:65532
 ENTRYPOINT ["/paguro-controller"]

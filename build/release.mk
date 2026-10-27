@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Supply chain and release targets (included by the Makefile via -include).
 #
 #   make vulncheck                     # govulncheck with reviewed exceptions

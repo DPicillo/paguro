@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # GitHub Actions (once the repository is hosted there); locally the same
 # checks run with `make ci`, before every push via hack/install-hooks.sh.
 name: ci

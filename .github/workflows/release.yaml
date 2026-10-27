@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Release on a version tag (vX.Y.Z, or vX.Y.Z-rc.N for a release candidate):
 # images and chart to the GitHub Container Registry, SBOMs, vulnerability
 # scans (govulncheck, grype), the kubectl plugin, Artifact Hub's repository

@@ -27,7 +27,7 @@ make vulncheck      # govulncheck with reviewed exceptions
 - Every source file starts with the SPDX header:
 
   ```
-  // SPDX-License-Identifier: AGPL-3.0-only
+  // SPDX-License-Identifier: Apache-2.0
   // Copyright (C) 2026 David Picillo
   ```
 
@@ -42,7 +42,7 @@ make vulncheck      # govulncheck with reviewed exceptions
   Hub shows as the package page (`make ci` fails on a value without a
   description).
 - New dependencies: `go run ./hack/thirdparty` must pass (only licenses
-  compatible with the AGPL-3.0).
+  compatible with the Apache-2.0).
 - Tests: unit tests for logic, a lab measurement for behaviour on a real
   cluster (`docs/ROADMAP.md` lists the criteria). Say in the pull request
   what you measured and how.
@@ -50,7 +50,7 @@ make vulncheck      # govulncheck with reviewed exceptions
 ## Developer Certificate of Origin
 
 Contributions are accepted under the project's license,
-AGPL-3.0-only, and you keep the copyright of your contribution. Every
+Apache-2.0, and you keep the copyright of your contribution. Every
 commit must be signed off: its message ends with a line
 
 ```

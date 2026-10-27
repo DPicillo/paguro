@@ -558,7 +558,8 @@ controller and both agents.
 
 ## License
 
-GNU Affero General Public License, version 3 only (`AGPL-3.0-only`). The
-eBPF program of Phantom mode is `GPL-2.0-only OR BSD-2-Clause`; the CRIU
-build in the node installer image is GPL-2.0 with its source in the image
+Apache License 2.0 (`Apache-2.0`); releases up to and including 0.1.2 were
+`AGPL-3.0-only`. The eBPF program of Phantom mode is `GPL-2.0-only OR
+BSD-2-Clause`; the CRIU build in the node installer image (with Paguro's
+patches) is GPL-2.0 with its source in the image
 `paguro-node-installer-sources`.

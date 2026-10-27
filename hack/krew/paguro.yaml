@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Krew plugin manifest template for kubectl-paguro (krew-index:
 # plugins/paguro.yaml). hack/krew/render.sh fills in @VERSION@ and the
 # @SHA256_<OS>_<ARCH>@ sums from the release's checksum file; the archives

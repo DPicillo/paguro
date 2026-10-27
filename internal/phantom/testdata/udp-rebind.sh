@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Phantom mode, UDP servers behind a NodePort with MASQUERADE --random-fully
 # (docs/PHANTOM-MODE.md, "UDP servers"): the NAT bindings of the server's clients
 # move to the new pod IP on the entry node and keep the masquerade port.

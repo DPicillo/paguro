@@ -1,25 +1,33 @@
 # Licenses and third-party software
 
-Paguro is licensed under the **GNU Affero General Public License v3.0 only**
-(`AGPL-3.0-only`, [LICENSE](../LICENSE)): you may use, change and
-redistribute it, also commercially; whoever distributes Paguro – changed or
-not – or lets others use a changed version over a network must offer the
-complete source code of that version under the same license.
+Paguro is licensed under the **Apache License 2.0** (`Apache-2.0`,
+[LICENSE](../LICENSE), [NOTICE](../NOTICE)): you may use, change and
+redistribute it, also as part of a proprietary product, as long as you keep
+the license and the notices and mark the files you changed. Releases up to
+and including 0.1.2 were licensed `AGPL-3.0-only` and stay so.
 
-Exception: the eBPF program of Phantom mode (`internal/phantom/bpf/`) is
-licensed `GPL-2.0-only OR BSD-2-Clause` – it runs in the Linux kernel and
-must carry a GPL-compatible license string for the kernel helpers it calls;
-its headers from libbpf are `LGPL-2.1 OR BSD-2-Clause`.
+Exceptions:
+
+- The eBPF program of Phantom mode (`internal/phantom/bpf/`) is licensed
+  `GPL-2.0-only OR BSD-2-Clause` – it runs in the Linux kernel and must
+  carry a GPL-compatible license string for the kernel helpers it calls;
+  its headers from libbpf are `LGPL-2.1 OR BSD-2-Clause`.
+- Paguro's patches to CRIU (`build/criu-patches/`) are changes to CRIU and
+  licensed like it, `GPL-2.0-only`.
+- The node installer image ships CRIU and other GPL- and LGPL-licensed
+  programs (below). They run as separate programs next to Paguro – no
+  Paguro code links them – and keep their own licenses; their source code
+  is published as an image of its own.
 
 ## What the images contain
 
 | Image | Contents | Licenses |
 |---|---|---|
-| `paguro-controller` | Paguro controller (static Go binary) on `gcr.io/distroless/static-debian13` | Paguro: AGPL-3.0-only; Go modules: see below; base image: Debian packages (mostly GPL/LGPL/BSD, sources at Debian) |
-| `paguro-agent` | Paguro agent and `paguro-runc` (static Go binaries) on Alpine Linux | Paguro: AGPL-3.0-only; Go modules: see below; Alpine packages (`util-linux-misc`: GPL-2.0-or-later, `ca-certificates`: MPL-2.0 and others) |
-| `paguro-node-installer` | CRIU 4.2.1 **with Paguro's patches** (`build/criu-patches/`), `nft`, `nsenter`, `ip`, `ss`, `cat`, `tee`, `rm`, `tar` (for hosts without them, such as Bottlerocket), the shared libraries they need (from Ubuntu 24.04, including glibc), `crictl`, the installer script, on Alpine Linux | CRIU: GPL-2.0-only (its `lib/` LGPL-2.1); nftables, libnftnl, libmnl, libxtables (iptables): GPL-2.0-or-later; glibc, libnl: LGPL-2.1-or-later; libselinux: public domain; pcre2 (libpcre2-8): BSD-3-Clause; gmp: LGPL-3.0-or-later OR GPL-2.0-or-later; protobuf-c, libnet, libbsd, libmd, libedit, libuuid (util-linux): BSD-style; ncurses (libtinfo), jansson: MIT-style; util-linux (`nsenter`): GPL-2.0-or-later; iproute2 (`ip`, `ss`): GPL-2.0-or-later; coreutils (`cat`, `tee`, `rm`), tar: GPL-3.0-or-later; libacl: LGPL-2.1-or-later; libbpf: LGPL-2.1 OR BSD-2-Clause; libelf (elfutils): LGPL-3.0-or-later OR GPL-2.0-or-later; zlib: Zlib; zstd: BSD-3-Clause OR GPL-2.0-only; libcap: BSD-3-Clause OR GPL-2.0-only; crictl: Apache-2.0; installer script: AGPL-3.0-only; Alpine packages (bash: GPL-3.0-or-later, coreutils: GPL-3.0-or-later, util-linux: GPL-2.0-or-later, …). The Debian copyright file of every bundled package is in `/licenses/bundle/`. |
+| `paguro-controller` | Paguro controller (static Go binary) on `gcr.io/distroless/static-debian13` | Paguro: Apache-2.0; Go modules: see below; base image: Debian packages (mostly GPL/LGPL/BSD, sources at Debian) |
+| `paguro-agent` | Paguro agent and `paguro-runc` (static Go binaries) on Alpine Linux | Paguro: Apache-2.0; Go modules: see below; Alpine packages (`util-linux-misc`: GPL-2.0-or-later, `ca-certificates`: MPL-2.0 and others) |
+| `paguro-node-installer` | CRIU 4.2.1 **with Paguro's patches** (`build/criu-patches/`), `nft`, `nsenter`, `ip`, `ss`, `cat`, `tee`, `rm`, `tar` (for hosts without them, such as Bottlerocket), the shared libraries they need (from Ubuntu 24.04, including glibc), `crictl`, the installer script, on Alpine Linux | CRIU: GPL-2.0-only (its `lib/` LGPL-2.1); nftables, libnftnl, libmnl, libxtables (iptables): GPL-2.0-or-later; glibc, libnl: LGPL-2.1-or-later; libselinux: public domain; pcre2 (libpcre2-8): BSD-3-Clause; gmp: LGPL-3.0-or-later OR GPL-2.0-or-later; protobuf-c, libnet, libbsd, libmd, libedit, libuuid (util-linux): BSD-style; ncurses (libtinfo), jansson: MIT-style; util-linux (`nsenter`): GPL-2.0-or-later; iproute2 (`ip`, `ss`): GPL-2.0-or-later; coreutils (`cat`, `tee`, `rm`), tar: GPL-3.0-or-later; libacl: LGPL-2.1-or-later; libbpf: LGPL-2.1 OR BSD-2-Clause; libelf (elfutils): LGPL-3.0-or-later OR GPL-2.0-or-later; zlib: Zlib; zstd: BSD-3-Clause OR GPL-2.0-only; libcap: BSD-3-Clause OR GPL-2.0-only; crictl: Apache-2.0; installer script: Apache-2.0; Alpine packages (bash: GPL-3.0-or-later, coreutils: GPL-3.0-or-later, util-linux: GPL-2.0-or-later, …). The Debian copyright file of every bundled package is in `/licenses/bundle/`. |
 
-Every image carries `LICENSE`, `docs/THIRD-PARTY.md` and
+Every image carries `LICENSE`, `NOTICE`, `docs/THIRD-PARTY.md` and
 `third_party/LICENSES.txt` under `/licenses/`.
 
 ## Source code of the GPL and LGPL components
@@ -49,7 +57,8 @@ maintainers (see the project's repository).
 
 Generated by `go run ./hack/thirdparty` (also writes the full license and
 notice texts to `third_party/LICENSES.txt`); every license listed is
-compatible with the AGPL-3.0.
+compatible with the Apache-2.0 (permissive, or MPL-2.0 for unchanged
+files).
 
 <!-- go-modules:begin -->
 | Module | Version | License |

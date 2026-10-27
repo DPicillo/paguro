@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Tests the node installer against fake host roots (no real node needed).
 #
 #   build/node-installer/test-fakeroot.sh [image]      (make installer-test)

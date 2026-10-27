@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 David Picillo
 
 // Phantom mode, part 5: connection attempts that went to the old address while

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Node installer and Helm chart targets (included by the Makefile via -include).
 #
 #   make installer-image PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.0

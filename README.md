@@ -5,7 +5,7 @@
 [![CI](https://github.com/DPicillo/paguro/actions/workflows/ci.yaml/badge.svg)](https://github.com/DPicillo/paguro/actions/workflows/ci.yaml)
 [![Release](https://img.shields.io/github/v/release/DPicillo/paguro?sort=semver)](https://github.com/DPicillo/paguro/releases)
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/paguro)](https://artifacthub.io/packages/search?repo=paguro)
-[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Kubernetes pod live migration, built on CRIU.** Paguro moves running pods
 between nodes – their memory, open files, volumes and network connections –
@@ -363,14 +363,13 @@ Development setup, checks and conventions:
 
 ## License
 
-Paguro is free software: you can redistribute it and/or modify it under the
-terms of the **GNU Affero General Public License, version 3 only**
-([LICENSE](LICENSE), SPDX `AGPL-3.0-only`). Commercial use is allowed; whoever
-distributes Paguro – modified or not – or offers a modified version to others
-over a network must make the complete source code of that version available
-under the same license.
+Paguro is licensed under the **Apache License 2.0** ([LICENSE](LICENSE),
+[NOTICE](NOTICE), SPDX `Apache-2.0`): use it, change it and build it into
+your own products, commercial ones included. Releases up to and including
+0.1.2 were licensed `AGPL-3.0-only` and stay so.
 
-The eBPF program of Phantom mode is `GPL-2.0-only OR BSD-2-Clause`. Third-party
+The eBPF program of Phantom mode is `GPL-2.0-only OR BSD-2-Clause`, Paguro's
+patches to CRIU are `GPL-2.0-only` like CRIU. Third-party
 components, their licenses and the source code of the CRIU bundle shipped in
 the node installer image: [docs/THIRD-PARTY.md](docs/THIRD-PARTY.md).
 

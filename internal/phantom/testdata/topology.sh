@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Network-namespace model of a 3-node cluster for the Phantom-mode tests.
 #
 #                       pgr-r (router, bridge br0 192.168.50.254/24)

@@ -137,7 +137,8 @@ welcome as [issues](https://github.com/DPicillo/paguro/issues).
 - Commit gate (DRA) and early hand-over on Cilium; UDP with a kept IP and
   in Phantom mode; Calico.
 - Agones GameServers; `emptyDir`s during pre-copy; NFS; lazy restore.
-- AGPL-3.0-only, third-party notices and the CRIU source image; TLS
+- Licensed AGPL-3.0-only (Apache-2.0 since 2026-10-27), third-party
+  notices and the CRIU source image; TLS
   between agents with per-node certificates; admission policies; upgrades
   during migrations; alert rules and dashboard; Kubernetes 1.28–1.37.
 - Evictions become migrations, at most three per node at a time, waiting
