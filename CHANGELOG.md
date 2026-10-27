@@ -4,7 +4,7 @@ All notable changes to Paguro. Versions follow [Semantic
 Versioning](https://semver.org); before 1.0 a minor version may change the
 API (`paguro.dev/v1alpha1`) and the chart's values.
 
-## v0.1.3 – unreleased
+## v0.1.3 – 2026-10-27
 
 Bottlerocket and EKS Auto Mode with nothing to set up (beta), SELinux with
 a label per pod, and a new license: Apache-2.0.

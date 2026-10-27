@@ -149,7 +149,7 @@ that does not qualify is left alone. Full list:
 ### Install
 
 ```sh
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.2 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.3 \
   --namespace paguro-system --create-namespace
 kubectl -n paguro-system rollout status ds/paguro-agent
 ```
@@ -169,7 +169,7 @@ From the [GitHub release](https://github.com/DPicillo/paguro/releases)
 (archives for Linux, macOS and Windows, and a checksum file):
 
 ```sh
-VERSION=v0.1.2 OS=linux ARCH=amd64   # darwin, windows; arm64
+VERSION=v0.1.3 OS=linux ARCH=amd64   # darwin, windows; arm64
 curl -fsSLO https://github.com/DPicillo/paguro/releases/download/$VERSION/kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 tar -xzf kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 install -m 0755 kubectl-paguro_${VERSION}_${OS}_${ARCH}/kubectl-paguro ~/.local/bin/
@@ -227,7 +227,7 @@ work" – unless it says "not supported".
 | Node OS | Ubuntu 22.04 and 24.04, Debian 12, Amazon Linux 2023, Bottlerocket (bundled CRIU verified); the lab runs Ubuntu 24.04 |
 | Architecture | x86_64. arm64: not yet (images are amd64 only; CRIU has no pre-copy there) |
 | Distributions | kubeadm: tested. RKE2 and k3s: the node installer handles their containerd configuration; the agent has not been run there |
-| Amazon EKS | Kubernetes 1.37, managed node groups with Amazon Linux 2023 or Bottlerocket, and EKS Auto Mode: tested (Bottlerocket and Auto Mode after 0.1.2). Fargate, Amazon Linux 2: not supported |
+| Amazon EKS | Kubernetes 1.37, managed node groups with Amazon Linux 2023 or Bottlerocket, and EKS Auto Mode: tested (Bottlerocket and Auto Mode since 0.1.3, beta). Fargate, Amazon Linux 2: not supported |
 | Karpenter | 1.14.1 on EKS: drift (including on-demand → spot), NodeClaim deletion, spot interruption warnings – tested |
 | GKE, AKS | not run yet |
 | Agones | 1.61 on Cilium 1.20: tested |

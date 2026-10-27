@@ -9,7 +9,7 @@ wrapper and the containerd runtime handler `paguro`. You don't need Ansible
 or an image build on the nodes.
 
 ```
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.2 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.3 \
   -n paguro-system --create-namespace
 ```
 
@@ -100,14 +100,14 @@ under one registry prefix and tag:
 `<registry>/paguro-node-installer:<tag>`.
 
 ```
-make controller-push installer-push PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.2
-make agent-image PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.2 && docker push registry.example.com/paguro/paguro-agent:v0.1.2
+make controller-push installer-push PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.3
+make agent-image PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.3 && docker push registry.example.com/paguro/paguro-agent:v0.1.3
 # or all in one go:
-make images-push PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.2
+make images-push PAGURO_REGISTRY=registry.example.com/paguro TAG=v0.1.3
 
 # A registry without TLS (development clusters), via crane; PUSH_REGISTRY
 # is the address this machine reaches it under:
-make images-crane-push PUSH_REGISTRY=registry.example.com:5000 TAG=v0.1.2
+make images-crane-push PUSH_REGISTRY=registry.example.com:5000 TAG=v0.1.3
 ```
 
 `make installer-test` runs the node installer against fake host roots
@@ -120,7 +120,7 @@ uninstall. No cluster is needed.
 ```
 kubectl create namespace paguro-system
 kubectl label namespace paguro-system pod-security.kubernetes.io/enforce=privileged
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.2 -n paguro-system
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.3 -n paguro-system
 kubectl -n paguro-system rollout status ds/paguro-agent
 ```
 
@@ -223,8 +223,8 @@ tested on k3s/RKE2.
 | Node type | Status | Why |
 |---|---|---|
 | **Managed node groups / self-managed, AL2023 AMI** | supported | the node installer does everything |
-| **Bottlerocket** (managed node groups) | supported (beta, after 0.1.2) | nothing to set up; an agent of its own (see below) |
-| EKS Auto Mode | **supported** (beta, after 0.1.2) | its nodes are Bottlerocket, managed by AWS (see below) |
+| **Bottlerocket** (managed node groups) | supported (beta, since 0.1.3) | nothing to set up; an agent of its own (see below) |
+| EKS Auto Mode | **supported** (beta, since 0.1.3) | its nodes are Bottlerocket, managed by AWS (see below) |
 | Fargate | **not supported** | no privileged pods, no hostPID/hostNetwork, no DaemonSets, no access to containerd |
 | AL2 AMI | not supported | containerd 1.7, cgroup v1 (end of life) |
 | Windows | not supported | no CRIU |
@@ -232,7 +232,7 @@ tested on k3s/RKE2.
 ### AL2023 (managed node groups)
 
 ```
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.2 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.3 \
   -n paguro-system --create-namespace
 # images mirrored to ECR instead of ghcr.io:
 #   --set global.imageRegistry=<account>.dkr.ecr.<region>.amazonaws.com/paguro
@@ -282,11 +282,10 @@ What happens on an AL2023 node:
 ### Bottlerocket
 
 Nothing to set up: the same `helm install` as for AL2023, no custom image,
-no bootstrap container, no Bottlerocket settings. From the release after
-0.1.2 on (until then from a checkout of `main`, with images you built):
+no bootstrap container, no Bottlerocket settings (since 0.1.3, beta):
 
 ```
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.3 \
   -n paguro-system --create-namespace
 kubectl -n paguro-system get ds    # paguro-agent and paguro-agent-bottlerocket
 ```
@@ -558,7 +557,7 @@ Windows, with a checksum file), or build it from source with
 `make kubectl-plugin`:
 
 ```
-VERSION=v0.1.2 OS=linux ARCH=amd64
+VERSION=v0.1.3 OS=linux ARCH=amd64
 curl -fsSLO https://github.com/DPicillo/paguro/releases/download/$VERSION/kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 tar -xzf kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 install -m 0755 kubectl-paguro_${VERSION}_${OS}_${ARCH}/kubectl-paguro ~/.local/bin/

@@ -85,7 +85,7 @@ disconnected.
 | cgroups | v2 (unified hierarchy) |
 | CRIU | 4.0 or later – the node installer ships CRIU 4.2.1 where the host has none |
 | Namespace | must allow privileged pods: the agent runs privileged with hostPID and hostNetwork |
-| Not supported | Fargate, Amazon Linux 2 and Windows nodes (Bottlerocket and EKS Auto Mode: from the release after 0.1.2) |
+| Not supported | Fargate, Amazon Linux 2 and Windows nodes (Bottlerocket and EKS Auto Mode: supported since 0.1.3, beta) |
 
 You prepare nothing on the nodes: the chart's node installer checks every
 node and sets up CRIU, nftables and the containerd runtime handler `paguro`.
@@ -96,7 +96,7 @@ is left alone. Full list:
 ## Install
 
 ```sh
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.2 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.3 \
   -n paguro-system --create-namespace
 kubectl -n paguro-system rollout status ds/paguro-agent
 ```
@@ -121,7 +121,7 @@ From the [GitHub release](https://github.com/DPicillo/paguro/releases)
 (archives for Linux, macOS and Windows, with a checksum file):
 
 ```sh
-VERSION=v0.1.2 OS=linux ARCH=amd64   # OS: linux, darwin, windows; ARCH: amd64, arm64
+VERSION=v0.1.3 OS=linux ARCH=amd64   # OS: linux, darwin, windows; ARCH: amd64, arm64
 curl -fsSLO https://github.com/DPicillo/paguro/releases/download/$VERSION/kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 tar -xzf kubectl-paguro_${VERSION}_${OS}_${ARCH}.tar.gz
 install -m 0755 kubectl-paguro_${VERSION}_${OS}_${ARCH}/kubectl-paguro ~/.local/bin/
@@ -343,7 +343,7 @@ the install instead of being ignored. Set values with `-f my-values.yaml` or
 | [`calico.yaml`](https://github.com/DPicillo/paguro/blob/main/deploy/helm/paguro/examples/calico.yaml) | Calico with calico-ipam: pods keep their IP |
 
 ```sh
-helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.2 \
+helm install paguro oci://ghcr.io/dpicillo/charts/paguro --version 0.1.3 \
   -n paguro-system --create-namespace \
   -f https://raw.githubusercontent.com/DPicillo/paguro/main/deploy/helm/paguro/examples/eks-karpenter.yaml
 ```
