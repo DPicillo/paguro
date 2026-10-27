@@ -396,6 +396,31 @@ func TestSelectNeverCrossesArchitectures(t *testing.T) {
 	}
 }
 
+// Bottlerocket and other hosts do not restore each other's checkpoints
+// (SELinux contexts, mounts): placement never crosses, in either direction.
+func TestSelectNeverCrossesNodeOS(t *testing.T) {
+	al := node("al2023")
+	al.Status.NodeInfo.OSImage = "Amazon Linux 2023.9.20261016"
+	br := node("bottlerocket")
+	br.Status.NodeInfo.OSImage = "Bottlerocket OS 1.67.0 (aws-k8s-1.37)"
+	br2 := node("bottlerocket-2")
+	br2.Status.NodeInfo.OSImage = "Bottlerocket (EKS Auto, Standard) 2026.10.23 (aws-k8s-1.37-standard)"
+	var nt *NoTargetError
+	req := Request{Pod: pod("100m", "100Mi"), SourceNode: &al, Nodes: []corev1.Node{al, br}, TargetNode: "bottlerocket"}
+	if _, err := Select(req); !errors.As(err, &nt) || !strings.Contains(nt.Rejections[0].Reason, "different node operating system (other → bottlerocket)") {
+		t.Fatalf("AL2023 → Bottlerocket not refused: %v", err)
+	}
+	req.SourceNode, req.Nodes, req.TargetNode = &br, []corev1.Node{br, al}, "al2023"
+	if _, err := Select(req); !errors.As(err, &nt) || !strings.Contains(nt.Rejections[0].Reason, "(bottlerocket → other)") {
+		t.Fatalf("Bottlerocket → AL2023 not refused: %v", err)
+	}
+	// Without a requested target: the other Bottlerocket node, never AL2023.
+	req.Nodes, req.TargetNode = []corev1.Node{br, al, br2}, ""
+	if res, err := Select(req); err != nil || res.Node != "bottlerocket-2" {
+		t.Fatalf("got %+v, %v; want bottlerocket-2", res, err)
+	}
+}
+
 // A pod with host ports goes only where they are free – the replacement
 // keeps them (Agones game servers: players know the port).
 func TestSelectHostPorts(t *testing.T) {

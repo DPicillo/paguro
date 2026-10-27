@@ -223,8 +223,8 @@ tested on k3s/RKE2.
 | Node type | Status | Why |
 |---|---|---|
 | **Managed node groups / self-managed, AL2023 AMI** | supported | the node installer does everything |
-| **Bottlerocket** (managed node groups) | supported | nothing to set up; an agent of its own (see below) |
-| EKS Auto Mode | **supported** | its nodes are Bottlerocket, managed by AWS (see below) |
+| **Bottlerocket** (managed node groups) | supported (beta, after 0.1.2) | nothing to set up; an agent of its own (see below) |
+| EKS Auto Mode | **supported** (beta, after 0.1.2) | its nodes are Bottlerocket, managed by AWS (see below) |
 | Fargate | **not supported** | no privileged pods, no hostPID/hostNetwork, no DaemonSets, no access to containerd |
 | AL2 AMI | not supported | containerd 1.7, cgroup v1 (end of life) |
 | Windows | not supported | no CRIU |
@@ -343,6 +343,13 @@ What happens on a Bottlerocket node:
   is therefore not charged to the agent's pod but to `system.slice`.
 * **SELinux labels.** Every pod has categories of its own; Paguro moves
   them as described under [SELinux](#selinux).
+* **Clusters with both kinds of nodes** (EKS Auto Mode next to an AL2023
+  node group, say): pods move only between nodes of the same kind –
+  Bottlerocket to Bottlerocket, others among themselves. A checkpoint does
+  not restore across them (SELinux contexts that one side does not know,
+  different container mounts), so placement never picks such a target and
+  an explicit `--to` is refused by the preflight. Give each kind at least
+  two nodes a pod may run on.
 
 **EKS Auto Mode** runs Bottlerocket on nodes that AWS manages, and
 Paguro runs there the same way – nothing to set up, no node class of
@@ -433,7 +440,9 @@ not get the taint – nothing would remove it.
   EBS CSI driver, Nitro instances in the same AZ): the target agent attaches
   the volume during pre-copy (pre-attach). Attaching then disappears from the
   freeze; the volume is still only mounted after the source has unmounted it.
-  gp3/io1 cannot do this, so the attach time stays in the freeze.
+  gp3/io1 cannot do this, so the attach time stays in the freeze. Measured
+  on EKS 1.37 with gp3 (2026-10-27): the volume's move took 17–22 s on
+  AL2023 and 23–45 s on Bottlerocket, freeze accordingly.
 * EFS (RWX) needs no detach.
 
 ## What the node installer does
@@ -621,6 +630,7 @@ was created by the chart) and the agent token (if it was created by the chart).
 | CertificateSigningRequests `paguro-agent-*` | the agents' requests | removed by Kubernetes an hour after they were signed |
 | `CiliumPodIPPool`s with label `app.kubernetes.io/managed-by=paguro` | sticky IPs of running pods; deleting them breaks their IP | `kubectl delete ciliumpodippools -l app.kubernetes.io/managed-by=paguro` (only once no migratable pods are left) |
 | Node annotations `paguro.dev/*` | agent | `kubectl annotate node --all paguro.dev/cpu-flags- paguro.dev/cpu-model- paguro.dev/agent-endpoint- paguro.dev/criu-version-` |
+| Node label `paguro.dev/os` (Bottlerocket nodes) | controller | `kubectl label node --all paguro.dev/os-` (after the node cleanup below, which uses it) |
 | **On the nodes**: drop-in, imports line, symlinks, `/opt/paguro`, `runc.conf`, `paguro-runc`, `/var/lib/paguro`, `/run/paguro` | the DaemonSet is gone, so nothing runs that could clean up | see below |
 
 The node installer records everything it has changed in
@@ -641,6 +651,11 @@ spec:
       hostPID: true
       hostNetwork: true
       tolerations: [{operator: Exists}]
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions: [{key: paguro.dev/os, operator: NotIn, values: [bottlerocket]}]
       initContainers:
         - name: uninstall
           image: <registry>/paguro-node-installer:<tag>
@@ -650,11 +665,43 @@ spec:
       containers:
         - {name: done, image: <registry>/paguro-node-installer:<tag>, command: ["sleep", "infinity"]}
       volumes: [{name: host, hostPath: {path: /}}]
+---
+# Bottlerocket nodes: privileged containers may not change the host there
+# (control_t), the cleanup runs as super_t like the agent.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: paguro-node-cleanup-bottlerocket, namespace: paguro-system}
+spec:
+  selector: {matchLabels: {app: paguro-node-cleanup-bottlerocket}}
+  template:
+    metadata: {labels: {app: paguro-node-cleanup-bottlerocket}}
+    spec:
+      hostPID: true
+      hostNetwork: true
+      tolerations: [{operator: Exists}]
+      nodeSelector: {paguro.dev/os: bottlerocket}
+      initContainers:
+        - name: uninstall
+          image: <registry>/paguro-node-installer:<tag>
+          args: ["uninstall"]
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: true
+            capabilities: {add: [ALL]}
+            seccompProfile: {type: Unconfined}
+            seLinuxOptions: {user: system_u, role: system_r, type: super_t, level: s0}
+          volumeMounts: [{name: host, mountPath: /host}]
+      containers:
+        - {name: done, image: <registry>/paguro-node-installer:<tag>, command: ["sleep", "infinity"]}
+      volumes: [{name: host, hostPath: {path: /}}]
 ```
 
 ```
-kubectl apply -f node-cleanup.yaml && kubectl -n paguro-system rollout status ds/paguro-node-cleanup
-kubectl -n paguro-system delete ds paguro-node-cleanup
+kubectl apply -f node-cleanup.yaml
+kubectl -n paguro-system rollout status ds/paguro-node-cleanup
+kubectl -n paguro-system rollout status ds/paguro-node-cleanup-bottlerocket   # if the cluster has Bottlerocket nodes
+kubectl -n paguro-system delete -f node-cleanup.yaml
+kubectl label node --all paguro.dev/os-
 # afterwards on each node, if needed: rm -rf /var/lib/paguro /run/paguro /etc/paguro /var/log/paguro
 ```
 

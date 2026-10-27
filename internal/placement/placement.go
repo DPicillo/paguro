@@ -148,6 +148,13 @@ func evaluate(req *Request, n *corev1.Node) (candidate, *Rejection) {
 	if src, dst := nodeArch(req.SourceNode), nodeArch(n); src != dst {
 		return reject("different CPU architecture (%s → %s): a process cannot continue on another instruction set", src, dst)
 	}
+	// Bottlerocket and other hosts differ in SELinux contexts (AL2023's
+	// unconfined_service_t does not exist on Bottlerocket) and in the
+	// containers' mounts: a checkpoint from one does not restore on the
+	// other – CRIU fails and the replacement would cold-start.
+	if src, dst := NodeOS(req.SourceNode), NodeOS(n); src != dst {
+		return reject("different node operating system (%s → %s): a checkpoint does not restore across them", osName(src), osName(dst))
+	}
 	if t := UntoleratedTaint(n.Spec.Taints, pod.Spec.Tolerations); t != nil {
 		return reject("untolerated taint %s=%s:%s", t.Key, t.Value, t.Effect)
 	}
@@ -216,6 +223,28 @@ func evaluate(req *Request, n *corev1.Node) (candidate, *Rejection) {
 			n.Name, strings.Join(missing, ",")))
 	}
 	return c, nil
+}
+
+// OSBottlerocket is NodeOS of Bottlerocket nodes (and the value of the
+// node label paguro.dev/os the controller sets on them).
+const OSBottlerocket = "bottlerocket"
+
+// NodeOS is the kind of host operating system as far as migrations care:
+// OSBottlerocket, or "" for every other (they restore each other's
+// checkpoints). Read from the kubelet's report, not the label: it is
+// right from the node's first status on.
+func NodeOS(n *corev1.Node) string {
+	if strings.HasPrefix(n.Status.NodeInfo.OSImage, "Bottlerocket") {
+		return OSBottlerocket
+	}
+	return ""
+}
+
+func osName(os string) string {
+	if os == "" {
+		return "other"
+	}
+	return os
 }
 
 // nodeArch is the node's CPU architecture: kubernetes.io/arch, else the

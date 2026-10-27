@@ -8,7 +8,7 @@
 # Contents of the image:
 #   /opt/paguro/bin/{criu,nft}  self-contained bundle (own glibc + loader,
 #   /opt/paguro/lib/*           see build/node-installer/bundle.sh)
-#   /opt/paguro/bin/crictl      static upstream binary
+#   /opt/paguro/bin/crictl      static, upstream source rebuilt (see below)
 #   /usr/local/bin/paguro-node-installer
 #
 # The bundle is built on Ubuntu 24.04 but does not depend on the host's
@@ -17,6 +17,7 @@
 
 ARG UBUNTU_IMAGE=ubuntu:24.04
 ARG ALPINE_IMAGE=alpine:3.24
+ARG GOLANG_IMAGE=golang:1.26.10
 
 FROM ${UBUNTU_IMAGE} AS criu
 ARG CRIU_VERSION=4.2.1
@@ -84,13 +85,19 @@ FROM scratch AS sources
 COPY --from=sources-collect /sources/ /sources/
 COPY LICENSE NOTICE docs/THIRD-PARTY.md /sources/
 
-FROM ${UBUNTU_IMAGE} AS crictl
+# crictl from source: the release binaries carry a Go and an x/net with
+# known, reachable vulnerabilities (govulncheck -mode binary); rebuilt here
+# with this Go and the fixed x/net, otherwise unchanged.
+FROM ${GOLANG_IMAGE} AS crictl
 ARG CRICTL_VERSION=v1.37.0
-ARG TARGETARCH=amd64
-ADD https://github.com/kubernetes-sigs/cri-tools/releases/download/${CRICTL_VERSION}/crictl-${CRICTL_VERSION}-linux-${TARGETARCH}.tar.gz /tmp/crictl.tgz
-ADD https://github.com/kubernetes-sigs/cri-tools/releases/download/${CRICTL_VERSION}/crictl-${CRICTL_VERSION}-linux-${TARGETARCH}.tar.gz.sha256 /tmp/crictl.tgz.sha256
-RUN echo "$(cat /tmp/crictl.tgz.sha256 | cut -d' ' -f1)  /tmp/crictl.tgz" | sha256sum -c - && \
-    mkdir -p /out && tar -xzf /tmp/crictl.tgz -C /out crictl
+ARG XNET_VERSION=v0.60.0
+RUN git clone --depth 1 --branch ${CRICTL_VERSION} https://github.com/kubernetes-sigs/cri-tools.git /src/cri-tools
+WORKDIR /src/cri-tools
+RUN go get golang.org/x/net@${XNET_VERSION} && go mod tidy && \
+    if [ -d vendor ]; then go mod vendor; fi && \
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X sigs.k8s.io/cri-tools/pkg/version.Version=${CRICTL_VERSION}" \
+      -o /out/crictl ./cmd/crictl && \
+    /out/crictl --version | grep -q "${CRICTL_VERSION#v}"
 
 FROM ${ALPINE_IMAGE}
 ARG CRIU_VERSION=4.2.1

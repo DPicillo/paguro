@@ -6,7 +6,6 @@ package controller
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -18,10 +17,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"paguro.dev/paguro/api/v1alpha1"
+	"paguro.dev/paguro/internal/placement"
 )
 
 // OSBottlerocket is LabelNodeOS's value on Bottlerocket nodes.
-const OSBottlerocket = "bottlerocket"
+const OSBottlerocket = placement.OSBottlerocket
 
 // NodeOSLabeler labels the nodes whose operating system needs an agent of
 // its own, so that the chart's DaemonSets can tell them apart without any
@@ -53,12 +53,7 @@ func (l *NodeOSLabeler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // nodeOS is the label value a node should carry ("" for none).
-func nodeOS(n *corev1.Node) string {
-	if strings.HasPrefix(n.Status.NodeInfo.OSImage, "Bottlerocket") {
-		return OSBottlerocket
-	}
-	return ""
-}
+func nodeOS(n *corev1.Node) string { return placement.NodeOS(n) }
 
 // Reconcile implements reconcile.Reconciler.
 func (l *NodeOSLabeler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

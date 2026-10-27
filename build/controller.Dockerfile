@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # paguro-controller – the build context is the repo root:
 #   docker build -f build/controller.Dockerfile -t <registry>/paguro-controller:<tag> .
-FROM golang:1.26.9 AS build
+FROM golang:1.26.10 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

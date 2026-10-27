@@ -6,8 +6,8 @@ description: >-
   flows continue. Evictions (kubectl drain, Karpenter, Cluster Autoscaler)
   become migrations.
 type: application
-version: 0.1.2
-appVersion: "v0.1.2"
+version: 0.1.3
+appVersion: "v0.1.3"
 # Installed and checked on every minor version from 1.28 to 1.37 (kind,
 # hack/version-matrix.sh); migrations run on 1.37. The agents' admission
 # policies need 1.30 and the commit gate 1.34; both are skipped before.
@@ -112,10 +112,16 @@ annotations:
           freezeBudgetMs: 500
           autoConverge: true
   artifacthub.io/changes: |
-    - kind: fixed
-      description: "Phantom mode: a connection survives when its pod comes back to a node and an address it held there before (the node's stale conntrack entries made it drop the packets as INVALID)"
     - kind: added
-      description: README and package page show recordings of a Minecraft (TCP) and a Red Eclipse (UDP) server live-migrating on Amazon EKS
+      description: "Bottlerocket and EKS Auto Mode (beta): the same helm install, nothing to set up – the agent runs there as super_t, checkpoints in containerd's SELinux context, three CRIU patches"
+    - kind: added
+      description: SELinux on nodes whose runtime labels every pod with categories of its own (RHEL, Bottlerocket, AL2023 with labelling)
+    - kind: changed
+      description: "License: Apache-2.0 instead of AGPL-3.0-only (releases up to 0.1.2 stay AGPL-3.0-only)"
+    - kind: changed
+      description: In clusters with Bottlerocket and other nodes, pods move only between nodes of the same kind
+    - kind: security
+      description: Go 1.26.10; crictl in the node installer rebuilt with fixed net/http and golang.org/x/net
   artifacthub.io/screenshots: |
     - title: Minecraft Java Edition on Amazon EKS – the server pod is being moved from an on-demand to a spot node while the player keeps playing
       url: https://raw.githubusercontent.com/DPicillo/paguro/main/docs/images/demo-minecraft-live.jpg

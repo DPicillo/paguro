@@ -3,7 +3,7 @@
 # The agent image contains nsenter (util-linux): host programs (runc, criu,
 # nft, crictl) run in the host's mount namespace so that they have exactly
 # containerd's view. paguro-runc is copied to the host at startup.
-FROM golang:1.26.9 AS build
+FROM golang:1.26.10 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
